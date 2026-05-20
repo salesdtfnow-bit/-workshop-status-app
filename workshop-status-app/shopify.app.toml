@@ -1,0 +1,4 @@
+# This file is intentionally empty.
+# We're using the Shopify Custom App approach (created directly in your store's admin),
+# not the Shopify Partner CLI workflow, so this config isn't needed.
+# You can safely delete this file from your repo.

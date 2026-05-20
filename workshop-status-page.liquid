@@ -1,0 +1,647 @@
+{% comment %}
+  Workshop Status Page Section — v3.1 (timestamp + label fixes)
+  File: sections/workshop-status-page.liquid
+
+  Reads shop metafields from namespace `workshop_status`:
+    * Status fields (text)   : overall, dtf, uv_dtf, vinyl_stickers, sublimation, artwork_setup
+    * Updated fields (date)  : overall_updated, dtf_updated, uv_dtf_updated,
+                               vinyl_stickers_updated, sublimation_updated, artwork_setup_updated
+
+  Status keys may be stored as snake_case (not_busy, full_capacity) OR as
+  display labels (Not Busy, Full Capacity) — the template normalises both.
+{% endcomment %}
+
+{% liquid
+  assign overall_mf  = shop.metafields.workshop_status.overall
+  assign overall_status = overall_mf.value.status | default: ''
+  if overall_status == blank
+    assign overall_status = overall_mf.value | default: ''
+  endif
+  if overall_status == blank
+    assign overall_status = overall_mf | default: ''
+  endif
+
+  assign dtf_mf = shop.metafields.workshop_status.dtf
+  assign dtf_status = dtf_mf.value.status | default: ''
+  if dtf_status == blank
+    assign dtf_status = dtf_mf.value | default: ''
+  endif
+  if dtf_status == blank
+    assign dtf_status = dtf_mf | default: ''
+  endif
+
+  assign uv_dtf_mf = shop.metafields.workshop_status.uv_dtf
+  assign uv_dtf_status = uv_dtf_mf.value.status | default: ''
+  if uv_dtf_status == blank
+    assign uv_dtf_status = uv_dtf_mf.value | default: ''
+  endif
+  if uv_dtf_status == blank
+    assign uv_dtf_status = uv_dtf_mf | default: ''
+  endif
+
+  assign vinyl_mf = shop.metafields.workshop_status.vinyl_stickers
+  assign vinyl_status = vinyl_mf.value.status | default: ''
+  if vinyl_status == blank
+    assign vinyl_status = vinyl_mf.value | default: ''
+  endif
+  if vinyl_status == blank
+    assign vinyl_status = vinyl_mf | default: ''
+  endif
+
+  assign sublimation_mf = shop.metafields.workshop_status.sublimation
+  assign sublimation_status = sublimation_mf.value.status | default: ''
+  if sublimation_status == blank
+    assign sublimation_status = sublimation_mf.value | default: ''
+  endif
+  if sublimation_status == blank
+    assign sublimation_status = sublimation_mf | default: ''
+  endif
+
+  assign artwork_mf = shop.metafields.workshop_status.artwork_setup
+  assign artwork_status = artwork_mf.value.status | default: ''
+  if artwork_status == blank
+    assign artwork_status = artwork_mf.value | default: ''
+  endif
+  if artwork_status == blank
+    assign artwork_status = artwork_mf | default: ''
+  endif
+
+  assign overall_updated     = shop.metafields.workshop_status.overall_updated.value         | default: shop.metafields.workshop_status.overall_updated         | default: ''
+  assign dtf_updated         = shop.metafields.workshop_status.dtf_updated.value             | default: shop.metafields.workshop_status.dtf_updated             | default: ''
+  assign uv_dtf_updated      = shop.metafields.workshop_status.uv_dtf_updated.value          | default: shop.metafields.workshop_status.uv_dtf_updated          | default: ''
+  assign vinyl_updated       = shop.metafields.workshop_status.vinyl_stickers_updated.value  | default: shop.metafields.workshop_status.vinyl_stickers_updated  | default: ''
+  assign sublimation_updated = shop.metafields.workshop_status.sublimation_updated.value     | default: shop.metafields.workshop_status.sublimation_updated     | default: ''
+  assign artwork_updated     = shop.metafields.workshop_status.artwork_setup_updated.value   | default: shop.metafields.workshop_status.artwork_setup_updated   | default: ''
+
+  if overall_updated == blank
+    assign overall_updated = shop.metafields.custom.workshop_status_overall_updated.value | default: shop.metafields.custom.workshop_status_overall_updated | default: ''
+  endif
+  if dtf_updated == blank
+    assign dtf_updated = shop.metafields.custom.workshop_status_dtf_updated.value | default: shop.metafields.custom.workshop_status_dtf_updated | default: ''
+  endif
+  if uv_dtf_updated == blank
+    assign uv_dtf_updated = shop.metafields.custom.workshop_status_uv_dtf_updated.value | default: shop.metafields.custom.workshop_status_uv_dtf_updated | default: ''
+  endif
+  if vinyl_updated == blank
+    assign vinyl_updated = shop.metafields.custom.workshop_status_vinyl_stickers_updated.value | default: shop.metafields.custom.workshop_status_vinyl_stickers_updated | default: ''
+  endif
+  if sublimation_updated == blank
+    assign sublimation_updated = shop.metafields.custom.workshop_status_sublimation_updated.value | default: shop.metafields.custom.workshop_status_sublimation_updated | default: ''
+  endif
+  if artwork_updated == blank
+    assign artwork_updated = shop.metafields.custom.workshop_status_artwork_setup_updated.value | default: shop.metafields.custom.workshop_status_artwork_setup_updated | default: ''
+  endif
+
+  if overall_updated == blank
+    assign overall_updated = overall_mf.value.updated_at | default: ''
+  endif
+  if dtf_updated == blank
+    assign dtf_updated = dtf_mf.value.updated_at | default: ''
+  endif
+  if uv_dtf_updated == blank
+    assign uv_dtf_updated = uv_dtf_mf.value.updated_at | default: ''
+  endif
+  if vinyl_updated == blank
+    assign vinyl_updated = vinyl_mf.value.updated_at | default: ''
+  endif
+  if sublimation_updated == blank
+    assign sublimation_updated = sublimation_mf.value.updated_at | default: ''
+  endif
+  if artwork_updated == blank
+    assign artwork_updated = artwork_mf.value.updated_at | default: ''
+  endif
+
+  assign overall_status     = overall_status     | default: 'Not Busy'
+  assign dtf_status         = dtf_status         | default: 'Not Busy'
+  assign uv_dtf_status      = uv_dtf_status      | default: 'Not Busy'
+  assign vinyl_status       = vinyl_status       | default: 'Not Busy'
+  assign sublimation_status = sublimation_status | default: 'Not Busy'
+  assign artwork_status     = artwork_status     | default: 'Not Busy'
+%}
+
+<style>
+  @keyframes wsp3-pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.35; }
+  }
+
+  @keyframes wsp3-fadeUp {
+    from { opacity: 0; transform: translateY(10px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+
+  #WS3-{{ section.id }} {
+    background: {{ section.settings.background_color }};
+    color: {{ section.settings.text_color }};
+    padding: {{ section.settings.padding_top }}px 0 {{ section.settings.padding_bottom }}px;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  }
+
+  #WS3-{{ section.id }} * { box-sizing: border-box; }
+
+  #WS3-{{ section.id }} .ws-wrap {
+    width: 100%;
+    max-width: 1100px;
+    margin: 0 auto;
+    padding: 0 24px;
+  }
+
+  #WS3-{{ section.id }} .ws-head {
+    text-align: center;
+    margin-bottom: 36px;
+    animation: wsp3-fadeUp 0.4s ease both;
+  }
+
+  #WS3-{{ section.id }} .ws-eyebrow {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 12px;
+    border-radius: 999px;
+    background: {{ section.settings.card_background_color }};
+    border: 0.5px solid rgba(0,0,0,0.08);
+    font-size: 0.7rem;
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: {{ section.settings.muted_text_color }};
+    margin-bottom: 14px;
+  }
+
+  #WS3-{{ section.id }} .ws-eyebrow-dot {
+    width: 5px;
+    height: 5px;
+    border-radius: 50%;
+    background: #22c55e;
+    animation: wsp3-pulse 2s ease-in-out infinite;
+  }
+
+  #WS3-{{ section.id }} .ws-h1 {
+    margin: 0 0 10px;
+    font-size: clamp(2rem, 4.5vw, 3rem);
+    font-weight: 600;
+    letter-spacing: -0.025em;
+    line-height: 1.15;
+    color: {{ section.settings.text_color }};
+  }
+
+  #WS3-{{ section.id }} .ws-sub {
+    margin: 0 auto;
+    max-width: 520px;
+    font-size: clamp(0.95rem, 1.8vw, 1.1rem);
+    line-height: 1.65;
+    color: {{ section.settings.muted_text_color }};
+  }
+
+  #WS3-{{ section.id }} .ws-hero {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 20px;
+    padding: 24px 28px;
+    border-radius: 14px;
+    background: {{ section.settings.card_background_color }};
+    border: 0.5px solid rgba(0,0,0,0.08);
+    margin-bottom: 12px;
+    animation: wsp3-fadeUp 0.4s ease 0.08s both;
+  }
+
+  #WS3-{{ section.id }} .ws-hero-info { flex: 1; min-width: 0; }
+
+  #WS3-{{ section.id }} .ws-label {
+    margin: 0 0 3px;
+    font-size: 0.7rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.07em;
+    color: {{ section.settings.muted_text_color }};
+    opacity: 0.7;
+  }
+
+  #WS3-{{ section.id }} .ws-hero-title {
+    margin: 0 0 5px;
+    font-size: clamp(1.3rem, 2.5vw, 1.7rem);
+    font-weight: 600;
+    letter-spacing: -0.02em;
+    color: {{ section.settings.text_color }};
+  }
+
+  #WS3-{{ section.id }} .ws-hero-desc {
+    margin: 0;
+    font-size: 0.95rem;
+    line-height: 1.55;
+    color: {{ section.settings.muted_text_color }};
+  }
+
+  #WS3-{{ section.id }} .ws-time {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    margin-top: 10px;
+    font-size: 0.8rem;
+    color: {{ section.settings.muted_text_color }};
+    opacity: 0.7;
+  }
+
+  #WS3-{{ section.id }} .ws-time svg {
+    width: 14px;
+    height: 14px;
+  }
+
+  #WS3-{{ section.id }} .ws-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    padding: 8px 16px;
+    border-radius: 999px;
+    font-size: 0.88rem;
+    font-weight: 600;
+    white-space: nowrap;
+    flex-shrink: 0;
+  }
+
+  #WS3-{{ section.id }} .ws-pill-lg {
+    padding: 10px 20px;
+    font-size: 0.95rem;
+  }
+
+  #WS3-{{ section.id }} .ws-pill-dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: currentColor;
+    animation: wsp3-pulse 2s ease-in-out infinite;
+  }
+
+  #WS3-{{ section.id }} .ws-s-green  { color: #15803d; background: #dcfce7; }
+  #WS3-{{ section.id }} .ws-s-amber  { color: #a16207; background: #fef9c3; }
+  #WS3-{{ section.id }} .ws-s-orange { color: #c2410c; background: #ffedd5; }
+  #WS3-{{ section.id }} .ws-s-red    { color: #b91c1c; background: #fee2e2; }
+
+  #WS3-{{ section.id }} .ws-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 10px;
+  }
+
+  #WS3-{{ section.id }} .ws-card {
+    display: flex;
+    flex-direction: column;
+    padding: 20px 22px;
+    border-radius: 14px;
+    background: {{ section.settings.card_background_color }};
+    border: 0.5px solid rgba(0,0,0,0.08);
+    transition: border-color 0.2s ease;
+    animation: wsp3-fadeUp 0.4s ease both;
+  }
+
+  #WS3-{{ section.id }} .ws-card:hover { border-color: rgba(0,0,0,0.18); }
+
+  #WS3-{{ section.id }} .ws-card:nth-child(1) { animation-delay: 0.13s; }
+  #WS3-{{ section.id }} .ws-card:nth-child(2) { animation-delay: 0.16s; }
+  #WS3-{{ section.id }} .ws-card:nth-child(3) { animation-delay: 0.19s; }
+  #WS3-{{ section.id }} .ws-card:nth-child(4) { animation-delay: 0.22s; }
+  #WS3-{{ section.id }} .ws-card:nth-child(5) { animation-delay: 0.25s; }
+
+  #WS3-{{ section.id }} .ws-card-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    margin-bottom: 10px;
+  }
+
+  #WS3-{{ section.id }} .ws-card-icon {
+    width: 36px;
+    height: 36px;
+    border-radius: 10px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+  }
+
+  #WS3-{{ section.id }} .ws-card-icon svg {
+    width: 18px;
+    height: 18px;
+    stroke-width: 1.5;
+  }
+
+  #WS3-{{ section.id }} .ws-icon-green  { background: #dcfce7; color: #15803d; }
+  #WS3-{{ section.id }} .ws-icon-amber  { background: #fef9c3; color: #a16207; }
+  #WS3-{{ section.id }} .ws-icon-orange { background: #ffedd5; color: #c2410c; }
+  #WS3-{{ section.id }} .ws-icon-red    { background: #fee2e2; color: #b91c1c; }
+
+  #WS3-{{ section.id }} .ws-card-title {
+    margin: 0;
+    font-size: 0.95rem;
+    font-weight: 600;
+    color: {{ section.settings.text_color }};
+    flex: 1;
+    min-width: 0;
+  }
+
+  #WS3-{{ section.id }} .ws-card-desc {
+    margin: 0 0 auto;
+    font-size: 0.88rem;
+    line-height: 1.5;
+    color: {{ section.settings.muted_text_color }};
+    padding-bottom: 14px;
+  }
+
+  #WS3-{{ section.id }} .ws-card-foot {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    padding-top: 12px;
+    border-top: 0.5px solid rgba(0,0,0,0.06);
+  }
+
+  #WS3-{{ section.id }} .ws-foot-time {
+    font-size: 0.78rem;
+    color: {{ section.settings.muted_text_color }};
+    opacity: 0.7;
+  }
+
+  #WS3-{{ section.id }} .ws-footer {
+    text-align: center;
+    margin-top: 12px;
+    padding: 14px 20px;
+    border-radius: 10px;
+    background: {{ section.settings.card_background_color }};
+    border: 0.5px solid rgba(0,0,0,0.06);
+    animation: wsp3-fadeUp 0.4s ease 0.28s both;
+  }
+
+  #WS3-{{ section.id }} .ws-footer p {
+    margin: 0;
+    font-size: 0.88rem;
+    line-height: 1.6;
+    color: {{ section.settings.muted_text_color }};
+  }
+
+  @media screen and (max-width: 989px) {
+    #WS3-{{ section.id }} .ws-grid { grid-template-columns: repeat(2, 1fr); }
+  }
+
+  @media screen and (max-width: 749px) {
+    #WS3-{{ section.id }} .ws-hero {
+      flex-direction: column;
+      align-items: flex-start;
+      padding: 20px;
+    }
+    #WS3-{{ section.id }} .ws-grid {
+      grid-template-columns: 1fr;
+      gap: 8px;
+    }
+    #WS3-{{ section.id }} .ws-card { padding: 16px 18px; }
+  }
+</style>
+
+{% comment %} SVG icon snippets {% endcomment %}
+{% capture icon_printer %}<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M6.72 13.829c-.24.03-.48.062-.72.096m.72-.096a42.415 42.415 0 0 1 10.56 0m-10.56 0L6.34 18m10.94-4.171c.24.03.48.062.72.096m-.72-.096L17.66 18m0 0 .229 2.523a1.125 1.125 0 0 1-1.12 1.227H7.231c-.662 0-1.18-.568-1.12-1.227L6.34 18m11.318 0h1.091A2.25 2.25 0 0 0 21 15.75V9.456c0-1.081-.768-2.015-1.837-2.175a48.055 48.055 0 0 0-1.913-.247M6.34 18H5.25A2.25 2.25 0 0 1 3 15.75V9.456c0-1.081.768-2.015 1.837-2.175a48.041 48.041 0 0 1 1.913-.247m10.5 0a48.536 48.536 0 0 0-10.5 0m10.5 0V3.375c0-.621-.504-1.125-1.125-1.125h-8.25c-.621 0-1.125.504-1.125 1.125v3.659M18 10.5h.008v.008H18V10.5Zm-3 0h.008v.008H15V10.5Z" /></svg>{% endcapture %}
+{% capture icon_diamond %}<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M15.59 14.37a6 6 0 0 1-5.84 7.38v-4.8m5.84-2.58a14.98 14.98 0 0 0 6.16-12.12A14.98 14.98 0 0 0 9.631 8.41m5.96 5.96a14.926 14.926 0 0 1-5.841 2.58m-.119-8.54a6 6 0 0 0-7.381 5.84h4.8m2.581-5.84a14.927 14.927 0 0 0-2.58 5.84m2.699 2.7c-.103.021-.207.041-.311.06a15.09 15.09 0 0 1-2.448-2.448 14.9 14.9 0 0 1 .06-.312m-2.24 2.39a4.493 4.493 0 0 0-1.757 4.306 4.493 4.493 0 0 0 4.306-1.758M16.5 9a1.5 1.5 0 1 1-3 0 1.5 1.5 0 0 1 3 0Z" /></svg>{% endcapture %}
+{% capture icon_tag %}<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M9.568 3H5.25A2.25 2.25 0 0 0 3 5.25v4.318c0 .597.237 1.17.659 1.591l9.581 9.581c.699.699 1.78.872 2.607.33a18.095 18.095 0 0 0 5.223-5.223c.542-.827.369-1.908-.33-2.607L11.16 3.66A2.25 2.25 0 0 0 9.568 3Z" /><path stroke-linecap="round" stroke-linejoin="round" d="M6 6h.008v.008H6V6Z" /></svg>{% endcapture %}
+{% capture icon_palette %}<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M9.53 16.122a3 3 0 0 0-5.78 1.128 2.25 2.25 0 0 1-2.4 2.245 4.5 4.5 0 0 0 8.4-2.245c0-.399-.078-.78-.22-1.128Zm0 0a15.998 15.998 0 0 0 3.388-1.62m-5.043-.025a15.994 15.994 0 0 1 1.622-3.395m3.42 3.42a15.995 15.995 0 0 0 4.764-4.648l3.876-5.814a1.151 1.151 0 0 0-1.597-1.597L14.146 6.32a15.996 15.996 0 0 0-4.649 4.763m3.42 3.42a6.776 6.776 0 0 0-3.42-3.42" /></svg>{% endcapture %}
+{% capture icon_pencil %}<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="m16.862 4.487 1.687-1.688a1.875 1.875 0 1 1 2.652 2.652L10.582 16.07a4.5 4.5 0 0 1-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 0 1 1.13-1.897l8.932-8.931Zm0 0L19.5 7.125M18 14v4.75A2.25 2.25 0 0 1 15.75 21H5.25A2.25 2.25 0 0 1 3 18.75V8.25A2.25 2.25 0 0 1 5.25 6H10" /></svg>{% endcapture %}
+{% capture icon_clock %}<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M12 6v6h4.5m4.5 0a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z" /></svg>{% endcapture %}
+
+<section id="WS3-{{ section.id }}" aria-labelledby="WS3H-{{ section.id }}">
+  <div class="ws-wrap">
+
+    <header class="ws-head">
+      {% if section.settings.eyebrow != blank %}
+        <div class="ws-eyebrow">
+          <span class="ws-eyebrow-dot"></span>
+          {{ section.settings.eyebrow | escape }}
+        </div>
+      {% endif %}
+      <h1 id="WS3H-{{ section.id }}" class="ws-h1">{{ section.settings.heading | escape }}</h1>
+      {% if section.settings.subheading != blank %}
+        <p class="ws-sub">{{ section.settings.subheading | escape }}</p>
+      {% endif %}
+    </header>
+
+    {% liquid
+      assign oc = overall_status | downcase | replace: ' ', '_' | replace: '-', '_'
+      assign ocl = 'green'
+      assign overall_label = 'Not Busy'
+      if oc == 'moderate'
+        assign ocl = 'amber'
+        assign overall_label = 'Moderate'
+      elsif oc == 'busy'
+        assign ocl = 'orange'
+        assign overall_label = 'Busy'
+      elsif oc == 'full_capacity'
+        assign ocl = 'red'
+        assign overall_label = 'Full Capacity'
+      endif
+    %}
+
+    <div class="ws-hero">
+      <div class="ws-hero-info">
+        <p class="ws-label">Overall status</p>
+        <h2 class="ws-hero-title">Workshop capacity</h2>
+        <p class="ws-hero-desc">{{ section.settings.overall_description | escape }}</p>
+        <div class="ws-time">
+          {{ icon_clock }}
+          {% if overall_updated != blank %}
+            <span>Updated {{ overall_updated | date: section.settings.date_format }}</span>
+          {% else %}
+            <span>Status is live</span>
+          {% endif %}
+        </div>
+      </div>
+      <span class="ws-pill ws-pill-lg ws-s-{{ ocl }}">
+        <span class="ws-pill-dot"></span>
+        {{ overall_label }}
+      </span>
+    </div>
+
+    <div class="ws-grid">
+
+      {% liquid
+        assign dc = dtf_status | downcase | replace: ' ', '_' | replace: '-', '_'
+        assign dcl = 'green'
+        assign dtf_label = 'Not Busy'
+        if dc == 'moderate'
+          assign dcl = 'amber'
+          assign dtf_label = 'Moderate'
+        elsif dc == 'busy'
+          assign dcl = 'orange'
+          assign dtf_label = 'Busy'
+        elsif dc == 'full_capacity'
+          assign dcl = 'red'
+          assign dtf_label = 'Full Capacity'
+        endif
+      %}
+      <div class="ws-card">
+        <div class="ws-card-head">
+          <h3 class="ws-card-title">DTF production</h3>
+          <div class="ws-card-icon ws-icon-{{ dcl }}">{{ icon_printer }}</div>
+        </div>
+        <p class="ws-card-desc">Direct-to-film transfer production queue.</p>
+        <div class="ws-card-foot">
+          <span class="ws-pill ws-s-{{ dcl }}">
+            <span class="ws-pill-dot"></span>
+            {{ dtf_label }}
+          </span>
+          <span class="ws-foot-time">{% if dtf_updated != blank %}{{ dtf_updated | date: section.settings.date_format }}{% else %}—{% endif %}</span>
+        </div>
+      </div>
+
+      {% liquid
+        assign uc = uv_dtf_status | downcase | replace: ' ', '_' | replace: '-', '_'
+        assign ucl = 'green'
+        assign uv_dtf_label = 'Not Busy'
+        if uc == 'moderate'
+          assign ucl = 'amber'
+          assign uv_dtf_label = 'Moderate'
+        elsif uc == 'busy'
+          assign ucl = 'orange'
+          assign uv_dtf_label = 'Busy'
+        elsif uc == 'full_capacity'
+          assign ucl = 'red'
+          assign uv_dtf_label = 'Full Capacity'
+        endif
+      %}
+      <div class="ws-card">
+        <div class="ws-card-head">
+          <h3 class="ws-card-title">UV-DTF production</h3>
+          <div class="ws-card-icon ws-icon-{{ ucl }}">{{ icon_diamond }}</div>
+        </div>
+        <p class="ws-card-desc">UV-DTF transfer print production queue.</p>
+        <div class="ws-card-foot">
+          <span class="ws-pill ws-s-{{ ucl }}">
+            <span class="ws-pill-dot"></span>
+            {{ uv_dtf_label }}
+          </span>
+          <span class="ws-foot-time">{% if uv_dtf_updated != blank %}{{ uv_dtf_updated | date: section.settings.date_format }}{% else %}—{% endif %}</span>
+        </div>
+      </div>
+
+      {% liquid
+        assign vc = vinyl_status | downcase | replace: ' ', '_' | replace: '-', '_'
+        assign vcl = 'green'
+        assign vinyl_label = 'Not Busy'
+        if vc == 'moderate'
+          assign vcl = 'amber'
+          assign vinyl_label = 'Moderate'
+        elsif vc == 'busy'
+          assign vcl = 'orange'
+          assign vinyl_label = 'Busy'
+        elsif vc == 'full_capacity'
+          assign vcl = 'red'
+          assign vinyl_label = 'Full Capacity'
+        endif
+      %}
+      <div class="ws-card">
+        <div class="ws-card-head">
+          <h3 class="ws-card-title">Vinyl stickers</h3>
+          <div class="ws-card-icon ws-icon-{{ vcl }}">{{ icon_tag }}</div>
+        </div>
+        <p class="ws-card-desc">Vinyl sticker printing and finishing queue.</p>
+        <div class="ws-card-foot">
+          <span class="ws-pill ws-s-{{ vcl }}">
+            <span class="ws-pill-dot"></span>
+            {{ vinyl_label }}
+          </span>
+          <span class="ws-foot-time">{% if vinyl_updated != blank %}{{ vinyl_updated | date: section.settings.date_format }}{% else %}—{% endif %}</span>
+        </div>
+      </div>
+
+      {% liquid
+        assign sc = sublimation_status | downcase | replace: ' ', '_' | replace: '-', '_'
+        assign scl = 'green'
+        assign sublimation_label = 'Not Busy'
+        if sc == 'moderate'
+          assign scl = 'amber'
+          assign sublimation_label = 'Moderate'
+        elsif sc == 'busy'
+          assign scl = 'orange'
+          assign sublimation_label = 'Busy'
+        elsif sc == 'full_capacity'
+          assign scl = 'red'
+          assign sublimation_label = 'Full Capacity'
+        endif
+      %}
+      <div class="ws-card">
+        <div class="ws-card-head">
+          <h3 class="ws-card-title">Sublimation</h3>
+          <div class="ws-card-icon ws-icon-{{ scl }}">{{ icon_palette }}</div>
+        </div>
+        <p class="ws-card-desc">Sublimation production work queue.</p>
+        <div class="ws-card-foot">
+          <span class="ws-pill ws-s-{{ scl }}">
+            <span class="ws-pill-dot"></span>
+            {{ sublimation_label }}
+          </span>
+          <span class="ws-foot-time">{% if sublimation_updated != blank %}{{ sublimation_updated | date: section.settings.date_format }}{% else %}—{% endif %}</span>
+        </div>
+      </div>
+
+      {% liquid
+        assign ac = artwork_status | downcase | replace: ' ', '_' | replace: '-', '_'
+        assign acl = 'green'
+        assign artwork_label = 'Not Busy'
+        if ac == 'moderate'
+          assign acl = 'amber'
+          assign artwork_label = 'Moderate'
+        elsif ac == 'busy'
+          assign acl = 'orange'
+          assign artwork_label = 'Busy'
+        elsif ac == 'full_capacity'
+          assign acl = 'red'
+          assign artwork_label = 'Full Capacity'
+        endif
+      %}
+      <div class="ws-card">
+        <div class="ws-card-head">
+          <h3 class="ws-card-title">Artwork setup</h3>
+          <div class="ws-card-icon ws-icon-{{ acl }}">{{ icon_pencil }}</div>
+        </div>
+        <p class="ws-card-desc">Artwork checks, file prep and setup queue.</p>
+        <div class="ws-card-foot">
+          <span class="ws-pill ws-s-{{ acl }}">
+            <span class="ws-pill-dot"></span>
+            {{ artwork_label }}
+          </span>
+          <span class="ws-foot-time">{% if artwork_updated != blank %}{{ artwork_updated | date: section.settings.date_format }}{% else %}—{% endif %}</span>
+        </div>
+      </div>
+
+    </div>
+
+    {% if section.settings.footer_note != blank %}
+      <div class="ws-footer">
+        <p>{{ section.settings.footer_note | escape }}</p>
+      </div>
+    {% endif %}
+
+  </div>
+</section>
+
+{% schema %}
+{
+  "name": "Workshop status page",
+  "class": "section",
+  "settings": [
+    { "type": "text",     "id": "eyebrow",             "label": "Badge text",        "default": "Live Status" },
+    { "type": "text",     "id": "heading",             "label": "Heading",           "default": "Workshop Status" },
+    { "type": "textarea","id": "subheading",           "label": "Intro text",        "default": "Check our current workshop capacity before placing an order. Statuses update in real time as production queues change." },
+    { "type": "textarea","id": "overall_description",  "label": "Overall description","default": "A live summary of our current production workload across all departments." },
+    { "type": "textarea","id": "footer_note",          "label": "Footer note",       "default": "Status is a guide only. For urgent orders, please contact us to confirm current lead times." },
+    { "type": "text",     "id": "date_format",         "label": "Date format",       "default": "%d %b %Y, %H:%M" },
+    { "type": "color",   "id": "background_color",     "label": "Background colour", "default": "#f8f9fa" },
+    { "type": "color",   "id": "card_background_color","label": "Card background",   "default": "#ffffff" },
+    { "type": "color",   "id": "text_color",           "label": "Text colour",       "default": "#111827" },
+    { "type": "color",   "id": "muted_text_color",     "label": "Secondary text",    "default": "#6b7280" },
+    { "type": "range",   "id": "padding_top",    "min": 24, "max": 120, "step": 4, "unit": "px", "label": "Top padding",    "default": 56 },
+    { "type": "range",   "id": "padding_bottom", "min": 24, "max": 120, "step": 4, "unit": "px", "label": "Bottom padding", "default": 56 }
+  ],
+  "presets": [
+    { "name": "Workshop status page" }
+  ]
+}
+{% endschema %}
