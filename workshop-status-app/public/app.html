@@ -108,11 +108,21 @@
     async function loadStatuses() {
       try {
         const r = await fetch('/api/statuses', { headers: authHeaders() });
-        if (!r.ok) throw new Error('Failed to load (' + r.status + ')');
-        const data = await r.json();
-        render(data);
+        const text = await r.text();
+        let body;
+        try { body = JSON.parse(text); } catch { body = { error: text }; }
+        if (!r.ok) {
+          throw new Error(`${r.status} — ${body.error || 'unknown error'}`);
+        }
+        render(body);
       } catch (e) {
-        document.getElementById('content').textContent = 'Could not load statuses: ' + e.message;
+        const el = document.getElementById('content');
+        el.classList.remove('loading');
+        el.innerHTML = `<div style="padding:20px;background:#fee2e2;border:1px solid #ef4444;border-radius:8px;color:#7f1d1d;">
+          <strong>Could not load statuses</strong><br>
+          <code style="font-size:12px;display:block;margin-top:8px;background:#fff;padding:8px;border-radius:4px;">${e.message}</code>
+          <p style="font-size:13px;margin:12px 0 0;">Check the Vercel deployment logs and confirm your environment variables (<code>SHOPIFY_SHOP_DOMAIN</code>, <code>SHOPIFY_ACCESS_TOKEN</code>, <code>ADMIN_PASS</code>) are set correctly.</p>
+        </div>`;
       }
     }
 

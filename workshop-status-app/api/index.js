@@ -18,22 +18,29 @@ const {
   PORT = 3000,
 } = process.env;
 
-if (!SHOPIFY_SHOP_DOMAIN || !SHOPIFY_ACCESS_TOKEN || !ADMIN_PASS) {
-  console.error('Missing required env vars. Check .env against .env.example');
+const missing = [];
+if (!SHOPIFY_SHOP_DOMAIN) missing.push('SHOPIFY_SHOP_DOMAIN');
+if (!SHOPIFY_ACCESS_TOKEN) missing.push('SHOPIFY_ACCESS_TOKEN');
+if (!ADMIN_PASS) missing.push('ADMIN_PASS');
+if (missing.length) {
+  const msg = `Missing required env vars: ${missing.join(', ')}`;
+  console.error(msg);
   if (!process.env.VERCEL) process.exit(1);
 }
 
 const API_VERSION = '2025-01';
 const GRAPHQL_URL = `https://${SHOPIFY_SHOP_DOMAIN}/admin/api/${API_VERSION}/graphql.json`;
 
-// Load the HTML template once at module load. The path is `..` because this
-// file lives in /api and the HTML lives in /public at the project root.
+// Load the HTML template once at module load.
 const HTML_TEMPLATE = fs.readFileSync(
   path.join(__dirname, '..', 'public', 'app.html'),
   'utf8'
 );
 
 async function shopifyGraphQL(query, variables = {}) {
+  if (!SHOPIFY_SHOP_DOMAIN || !SHOPIFY_ACCESS_TOKEN) {
+    throw new Error('Server not configured — missing SHOPIFY_SHOP_DOMAIN or SHOPIFY_ACCESS_TOKEN env var on Vercel');
+  }
   const resp = await fetch(GRAPHQL_URL, {
     method: 'POST',
     headers: {
@@ -42,8 +49,15 @@ async function shopifyGraphQL(query, variables = {}) {
     },
     body: JSON.stringify({ query, variables }),
   });
-  if (!resp.ok) throw new Error(`Shopify API ${resp.status}`);
-  return resp.json();
+  const bodyText = await resp.text();
+  if (!resp.ok) {
+    throw new Error(`Shopify API ${resp.status}: ${bodyText.slice(0, 300)}`);
+  }
+  try {
+    return JSON.parse(bodyText);
+  } catch {
+    throw new Error(`Shopify returned non-JSON: ${bodyText.slice(0, 200)}`);
+  }
 }
 
 const app = express();
@@ -59,6 +73,9 @@ app.use((_req, res, next) => {
 });
 
 function requireAuth(req, res, next) {
+  if (!ADMIN_PASS) {
+    return res.status(500).json({ error: 'Server not configured — missing ADMIN_PASS env var on Vercel' });
+  }
   const pass = req.headers['x-admin-pass'];
   if (!pass) return res.status(401).json({ error: 'Missing X-Admin-Pass header' });
   const a = Buffer.from(String(pass));
@@ -71,6 +88,9 @@ function requireAuth(req, res, next) {
 
 // ── Serve the embedded dashboard ────────────────────────────────────────────
 app.get('/', (_req, res) => {
+  if (!ADMIN_PASS) {
+    return res.status(500).send('Server not configured — missing ADMIN_PASS env var on Vercel');
+  }
   res.send(HTML_TEMPLATE.replace(/\{\{ADMIN_PASS\}\}/g, ADMIN_PASS));
 });
 
@@ -98,6 +118,7 @@ app.get('/api/statuses', requireAuth, async (_req, res) => {
     const data = await shopifyGraphQL(query);
     res.json(data.data?.shop || {});
   } catch (e) {
+    console.error('GET /api/statuses error:', e);
     res.status(500).json({ error: e.message });
   }
 });
@@ -110,10 +131,10 @@ app.post('/api/update', requireAuth, async (req, res) => {
   try {
     const { department, status } = req.body;
     if (!VALID_DEPARTMENTS.includes(department)) {
-      return res.status(400).json({ error: 'Invalid department' });
+      return res.status(400).json({ error: 'Invalid department: ' + department });
     }
     if (!VALID_STATUSES.includes(status)) {
-      return res.status(400).json({ error: 'Invalid status' });
+      return res.status(400).json({ error: 'Invalid status: ' + status });
     }
 
     const shopIdData = await shopifyGraphQL(`{ shop { id } }`);
@@ -155,6 +176,7 @@ app.post('/api/update', requireAuth, async (req, res) => {
     }
     res.json({ ok: true, department, status, updatedAt: nowIso });
   } catch (e) {
+    console.error('POST /api/update error:', e);
     res.status(500).json({ error: e.message });
   }
 });
