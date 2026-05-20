@@ -1,8 +1,4 @@
 // Workshop Status — Shopify Dev Dashboard app backend
-// Provides:
-//  - OAuth handlers (one-time token capture flow)
-//  - Dashboard UI for status updates
-//  - API endpoints that write to shop metafields
 import express from 'express';
 import path from 'node:path';
 import fs from 'node:fs';
@@ -53,6 +49,11 @@ async function shopifyGraphQL(query, variables = {}) {
   }
 }
 
+async function getShopGid() {
+  const data = await shopifyGraphQL(`{ shop { id } }`);
+  return data.data?.shop?.id;
+}
+
 const app = express();
 app.use(express.json());
 
@@ -97,7 +98,7 @@ app.get('/install', (req, res) => {
   res.redirect(url);
 });
 
-// ─── OAuth: step 2 — exchange code for token, show it to user ─────────────
+// ─── OAuth: step 2 — exchange code for token ──────────────────────────────
 app.get('/auth/callback', async (req, res) => {
   const { shop, code } = req.query;
   if (!shop || !code) {
@@ -123,17 +124,13 @@ app.get('/auth/callback', async (req, res) => {
       .token{background:#fef3c7;border:2px solid #d97706;padding:20px;border-radius:8px;font-family:monospace;font-size:16px;word-break:break-all;user-select:all;margin:20px 0}
       ol{padding-left:20px} li{margin:8px 0}</style></head><body>
       <h1>Success! Your Admin API access token</h1>
-      <p>This token starts with <code>shpat_</code> and grants this app read/write access to your shop's metafields.</p>
       <div class="token">${json.access_token}</div>
-      <h2>Next steps</h2>
       <ol>
-        <li>Click the yellow box above to select the whole token, then copy (Ctrl+C / Cmd+C).</li>
-        <li>Open <a href="https://vercel.com" target="_blank">vercel.com</a> → your <code>workshop-status-app</code> project → <strong>Settings → Environment Variables</strong>.</li>
-        <li>Find <code>SHOPIFY_ACCESS_TOKEN</code> → click ⋯ → <strong>Edit</strong> → paste the new token → save.</li>
-        <li>Go to <strong>Deployments</strong> tab → ⋯ on the latest deployment → <strong>Redeploy</strong> (untick build cache).</li>
-        <li>After redeploy finishes (~1 min), refresh the Workshop Status app inside Shopify admin. The dashboard should now load with all 6 cards.</li>
+        <li>Click the yellow box, copy the token.</li>
+        <li>Vercel → Settings → Environment Variables → SHOPIFY_ACCESS_TOKEN → paste → save.</li>
+        <li>Deployments → ⋯ on latest → Redeploy (untick build cache).</li>
+        <li>Refresh the app inside Shopify admin.</li>
       </ol>
-      <p style="color:#7f1d1d"><strong>Important:</strong> this token won't be shown again — make sure you save it to Vercel before closing this page.</p>
       </body></html>`);
   } catch (e) {
     res.status(500).send(`<pre>OAuth error: ${e.message}</pre>`);
@@ -143,20 +140,19 @@ app.get('/auth/callback', async (req, res) => {
 // ─── Embedded dashboard ────────────────────────────────────────────────────
 app.get('/', (_req, res) => {
   if (!ADMIN_PASS) {
-    return res.status(500).send('Server not configured — missing ADMIN_PASS env var on Vercel. Set it then redeploy.');
+    return res.status(500).send('Server not configured — missing ADMIN_PASS env var on Vercel.');
   }
   if (!SHOPIFY_ACCESS_TOKEN) {
     return res.send(`<!doctype html><html><body style="font-family:sans-serif;padding:40px;max-width:600px;margin:auto">
       <h1>Setup needed</h1>
       <p>This app needs an Admin API access token before it can read or write metafields.</p>
       <p><a href="/install" style="display:inline-block;padding:12px 24px;background:#202223;color:#fff;border-radius:8px;text-decoration:none;font-weight:600">Run OAuth install</a></p>
-      <p style="color:#6b7280;font-size:14px">After install, you'll receive a token to paste into Vercel's env vars.</p>
       </body></html>`);
   }
   res.send(HTML_TEMPLATE.replace(/\{\{ADMIN_PASS\}\}/g, ADMIN_PASS));
 });
 
-// ─── API: read current statuses ────────────────────────────────────────────
+// ─── API: read statuses + capacity ────────────────────────────────────────
 app.get('/api/statuses', requireAuth, async (_req, res) => {
   try {
     const query = `
@@ -174,6 +170,8 @@ app.get('/api/statuses', requireAuth, async (_req, res) => {
           vinyl_stickers_updated: metafield(namespace: "workshop_status", key: "vinyl_stickers_updated") { value }
           sublimation_updated: metafield(namespace: "workshop_status", key: "sublimation_updated") { value }
           artwork_setup_updated: metafield(namespace: "workshop_status", key: "artwork_setup_updated") { value }
+          dtf_capacity_total: metafield(namespace: "dtfcapacity", key: "total") { value }
+          dtf_capacity_used: metafield(namespace: "dtfcapacity", key: "used") { value }
         }
       }
     `;
@@ -198,8 +196,7 @@ app.post('/api/update', requireAuth, async (req, res) => {
     if (!VALID_STATUSES.includes(status)) {
       return res.status(400).json({ error: 'Invalid status: ' + status });
     }
-    const shopIdData = await shopifyGraphQL(`{ shop { id } }`);
-    const shopGid = shopIdData.data?.shop?.id;
+    const shopGid = await getShopGid();
     if (!shopGid) return res.status(500).json({ error: 'Could not load shop ID' });
     const nowIso = new Date().toISOString();
     const mutation = `
@@ -224,6 +221,69 @@ app.post('/api/update', requireAuth, async (req, res) => {
     res.json({ ok: true, department, status, updatedAt: nowIso });
   } catch (e) {
     console.error('POST /api/update error:', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ─── API: update DTF capacity (total or used in meters) ───────────────────
+app.post('/api/capacity', requireAuth, async (req, res) => {
+  try {
+    const { total, used } = req.body;
+    const metafields = [];
+    const shopGid = await getShopGid();
+    if (!shopGid) return res.status(500).json({ error: 'Could not load shop ID' });
+
+    if (Number.isFinite(total)) {
+      if (total < 0 || total > 100000) {
+        return res.status(400).json({ error: 'Invalid total (must be 0–100000)' });
+      }
+      metafields.push({
+        ownerId: shopGid,
+        namespace: 'dtfcapacity',
+        key: 'total',
+        type: 'number_integer',
+        value: String(Math.round(total)),
+      });
+    }
+    if (Number.isFinite(used)) {
+      if (used < 0 || used > 100000) {
+        return res.status(400).json({ error: 'Invalid used (must be 0–100000)' });
+      }
+      metafields.push({
+        ownerId: shopGid,
+        namespace: 'dtfcapacity',
+        key: 'used',
+        type: 'number_integer',
+        value: String(Math.round(used)),
+      });
+    }
+    if (metafields.length === 0) {
+      return res.status(400).json({ error: 'Provide at least one of: total, used' });
+    }
+    // Also stamp dtf_updated so storefront timestamp reflects capacity change too
+    metafields.push({
+      ownerId: shopGid,
+      namespace: 'workshop_status',
+      key: 'dtf_updated',
+      type: 'date_time',
+      value: new Date().toISOString(),
+    });
+    const mutation = `
+      mutation SetCapacity($metafields: [MetafieldsSetInput!]!) {
+        metafieldsSet(metafields: $metafields) {
+          metafields { key namespace value }
+          userErrors { field message }
+        }
+      }
+    `;
+    const data = await shopifyGraphQL(mutation, { metafields });
+    const errors = data.data?.metafieldsSet?.userErrors || [];
+    if (errors.length) {
+      return res.status(400).json({ error: 'Shopify rejected the update', details: errors });
+    }
+    res.json({ ok: true });
+  } catch (e) {
+    console.error('POST /api/capacity error:', e);
     res.status(500).json({ error: e.message });
   }
 });
