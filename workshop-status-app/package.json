@@ -2,11 +2,11 @@
   "name": "workshop-status-app",
   "version": "1.0.0",
   "description": "Shopify admin app for managing DTF Now workshop department statuses",
-  "main": "server.js",
+  "main": "api/index.js",
   "type": "module",
   "scripts": {
-    "start": "node server.js",
-    "dev": "node --watch server.js"
+    "start": "node api/index.js",
+    "dev": "node --watch api/index.js"
   },
   "engines": {
     "node": ">=18"
