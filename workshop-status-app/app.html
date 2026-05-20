@@ -1,0 +1,337 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Workshop Status</title>
+  <style>
+    :root {
+      --bg: #f6f6f7;
+      --surface: #fff;
+      --border: #e1e3e5;
+      --border-strong: #c9cccf;
+      --text: #202223;
+      --text-muted: #6d7175;
+      --text-faint: #8c9196;
+      --green: #15803d;     --green-soft: #dcfce7;     --green-dot: #22c55e;
+      --amber: #a16207;     --amber-soft: #fef9c3;     --amber-dot: #eab308;
+      --orange: #c2410c;    --orange-soft: #ffedd5;    --orange-dot: #f97316;
+      --red: #b91c1c;       --red-soft: #fee2e2;       --red-dot: #ef4444;
+      --shadow-sm: 0 1px 0 rgba(0,0,0,0.04), 0 1px 3px rgba(0,0,0,0.05);
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; padding: 28px 20px; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: var(--bg); color: var(--text); }
+    .wrap { max-width: 1180px; margin: 0 auto; }
+    .header { display: flex; align-items: flex-end; justify-content: space-between; gap: 16px; margin-bottom: 24px; }
+    .header h1 { font-size: 28px; font-weight: 700; letter-spacing: -0.02em; margin: 0 0 4px; }
+    .header .sub { color: var(--text-muted); font-size: 14px; margin: 0; max-width: 580px; line-height: 1.5; }
+    .refresh-btn { padding: 8px 14px; border-radius: 8px; border: 1px solid var(--border-strong); background: var(--surface); font-size: 13px; font-weight: 500; cursor: pointer; color: var(--text); display: inline-flex; align-items: center; gap: 6px; font-family: inherit; }
+    .refresh-btn:hover { border-color: #8a8a8a; }
+    .refresh-btn:disabled { opacity: .5; cursor: wait; }
+
+    .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(330px, 1fr)); gap: 14px; }
+    .card { background: var(--surface); border-radius: 14px; padding: 22px; box-shadow: var(--shadow-sm); border: 1px solid var(--border); transition: border-color .15s; }
+    .card.overall { grid-column: 1 / -1; }
+    .card.featured { border: 1px solid #bfdbfe; }
+    .card-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; margin-bottom: 4px; }
+    .card-title { display: flex; align-items: center; gap: 10px; min-width: 0; }
+    .card-icon { width: 32px; height: 32px; border-radius: 8px; background: #f3f4f6; display: flex; align-items: center; justify-content: center; flex-shrink: 0; font-size: 16px; }
+    .card-icon svg { width: 18px; height: 18px; stroke-width: 1.6; }
+    .card h2 { font-size: 15px; font-weight: 600; margin: 0; color: var(--text); }
+    .meta { font-size: 12px; color: var(--text-faint); margin: 0 0 14px 42px; }
+    .card.overall .meta { margin-left: 0; }
+
+    .btnrow { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; }
+    .btn { padding: 10px 6px; border-radius: 8px; border: 1px solid var(--border-strong); background: #fff; font-size: 12.5px; font-weight: 600; cursor: pointer; transition: all .12s; color: var(--text); font-family: inherit; line-height: 1.2; }
+    .btn:hover { border-color: #8a8a8a; }
+    .btn.active { color: #fff; border-color: transparent; box-shadow: 0 1px 3px rgba(0,0,0,0.12); transform: translateY(-1px); }
+    .btn.active.s-not_busy     { background: var(--green); }
+    .btn.active.s-moderate     { background: var(--amber); }
+    .btn.active.s-busy         { background: var(--orange); }
+    .btn.active.s-full_capacity { background: var(--red); }
+    .btn.s-not_busy:hover:not(.active)     { background: var(--green-soft); border-color: var(--green); color: var(--green); }
+    .btn.s-moderate:hover:not(.active)     { background: var(--amber-soft); border-color: var(--amber); color: var(--amber); }
+    .btn.s-busy:hover:not(.active)         { background: var(--orange-soft); border-color: var(--orange); color: var(--orange); }
+    .btn.s-full_capacity:hover:not(.active) { background: var(--red-soft); border-color: var(--red); color: var(--red); }
+    .btn:disabled { opacity: .5; cursor: wait; transform: none; }
+
+    .pill { display: inline-flex; align-items: center; gap: 5px; padding: 3px 9px; border-radius: 999px; font-size: 11.5px; font-weight: 600; white-space: nowrap; }
+    .pill .dot { width: 6px; height: 6px; border-radius: 50%; }
+    .pill.s-not_busy { background: var(--green-soft); color: var(--green); }
+    .pill.s-not_busy .dot { background: var(--green-dot); }
+    .pill.s-moderate { background: var(--amber-soft); color: var(--amber); }
+    .pill.s-moderate .dot { background: var(--amber-dot); }
+    .pill.s-busy { background: var(--orange-soft); color: var(--orange); }
+    .pill.s-busy .dot { background: var(--orange-dot); }
+    .pill.s-full_capacity { background: var(--red-soft); color: var(--red); }
+    .pill.s-full_capacity .dot { background: var(--red-dot); }
+    .pill.s-unknown { background: #f0f0f0; color: var(--text-faint); }
+    .pill.s-unknown .dot { background: #9ca3af; }
+
+    /* Capacity bar */
+    .capacity-section { margin-top: 16px; padding-top: 16px; border-top: 1px dashed var(--border); }
+    .capacity-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
+    .capacity-head strong { font-size: 13px; font-weight: 600; }
+    .capacity-head .pct { font-size: 12px; color: var(--text-muted); font-variant-numeric: tabular-nums; }
+    .progress { background: #f3f4f6; border-radius: 999px; height: 10px; overflow: hidden; margin-bottom: 14px; }
+    .progress > div { height: 100%; border-radius: 999px; transition: width .25s ease; }
+    .progress .p-low    { background: var(--green-dot); }
+    .progress .p-mid    { background: var(--amber-dot); }
+    .progress .p-high   { background: var(--orange-dot); }
+    .progress .p-full   { background: var(--red-dot); }
+    .capacity-inputs { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+    .input-group { display: flex; flex-direction: column; }
+    .input-group label { font-size: 11px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.04em; margin-bottom: 4px; font-weight: 600; }
+    .input-row { display: flex; align-items: stretch; gap: 4px; }
+    .input-row input { flex: 1; min-width: 0; padding: 8px 10px; border: 1px solid var(--border-strong); border-radius: 6px; font-size: 14px; font-family: inherit; color: var(--text); background: #fff; font-variant-numeric: tabular-nums; }
+    .input-row input:focus { outline: none; border-color: #2c6ecb; box-shadow: 0 0 0 3px rgba(44,110,203,0.15); }
+    .input-row .unit { display: flex; align-items: center; padding: 0 8px; font-size: 12px; color: var(--text-faint); }
+    .quick-row { display: flex; gap: 4px; margin-top: 8px; flex-wrap: wrap; }
+    .quick-btn { padding: 5px 9px; border-radius: 6px; border: 1px solid var(--border); background: #fff; font-size: 11.5px; font-weight: 600; cursor: pointer; color: var(--text-muted); font-family: inherit; }
+    .quick-btn:hover { background: #f9fafb; border-color: var(--border-strong); color: var(--text); }
+    .quick-btn.danger:hover { background: var(--red-soft); border-color: var(--red); color: var(--red); }
+
+    .toast { position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%); background: #202223; color: #fff; padding: 11px 20px; border-radius: 10px; font-size: 14px; opacity: 0; pointer-events: none; transition: opacity .2s, transform .2s; z-index: 1000; box-shadow: 0 8px 24px rgba(0,0,0,0.15); }
+    .toast.show { opacity: 1; transform: translateX(-50%) translateY(-4px); }
+    .toast.error { background: #b91c1c; }
+
+    .spinner { display: inline-block; width: 14px; height: 14px; border: 2px solid var(--border); border-top-color: var(--text-muted); border-radius: 50%; animation: spin .8s linear infinite; vertical-align: middle; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .loading { text-align: center; padding: 80px 20px; color: var(--text-muted); }
+
+    .error-box { padding: 18px; background: var(--red-soft); border: 1px solid #ef4444; border-radius: 10px; color: #7f1d1d; }
+    .error-box code { display: block; margin-top: 8px; background: #fff; padding: 10px; border-radius: 6px; font-size: 12px; }
+
+    @media (max-width: 600px) {
+      .header { flex-direction: column; align-items: flex-start; }
+      .grid { grid-template-columns: 1fr; }
+      .capacity-inputs { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <header class="header">
+      <div>
+        <h1>Workshop Status</h1>
+        <p class="sub">Tap a status for each department. Changes save to Shopify metafields immediately and reflect on the public storefront within seconds.</p>
+      </div>
+      <button id="refreshBtn" class="refresh-btn" title="Reload current values">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 12a9 9 0 0 1 15.5-6.3L21 8M21 3v5h-5M21 12a9 9 0 0 1-15.5 6.3L3 16M3 21v-5h5"/></svg>
+        Refresh
+      </button>
+    </header>
+    <div id="content" class="loading"><span class="spinner"></span>&nbsp;Loading current statuses…</div>
+  </div>
+  <div id="toast" class="toast"></div>
+
+  <script>
+    const ADMIN_PASS = '{{ADMIN_PASS}}';
+
+    const DEPARTMENTS = [
+      { key: 'overall',         label: 'Overall workshop', desc: 'High-level summary shown to customers', overall: true,
+        icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6"/></svg>' },
+      { key: 'dtf',             label: 'DTF production',           desc: 'Direct-to-film transfer queue', capacity: true,
+        icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M6.72 13.83c-.24.03-.48.06-.72.1m.72-.1a42.4 42.4 0 0 1 10.56 0m-10.56 0L6.34 18m10.94-4.17c.24.03.48.06.72.1m-.72-.1L17.66 18m0 0 .23 2.52a1.13 1.13 0 0 1-1.12 1.23H7.23c-.66 0-1.18-.57-1.12-1.23L6.34 18m11.32 0h1.09A2.25 2.25 0 0 0 21 15.75V9.46c0-1.08-.77-2.02-1.84-2.18a48 48 0 0 0-1.91-.25M6.34 18H5.25A2.25 2.25 0 0 1 3 15.75V9.46c0-1.08.77-2.02 1.84-2.18.63-.09 1.27-.18 1.91-.25m10.5 0a48.5 48.5 0 0 0-10.5 0m10.5 0V3.38c0-.62-.5-1.13-1.13-1.13h-8.25c-.62 0-1.12.5-1.12 1.13v3.66M18 10.5h.01M15 10.5h.01"/></svg>' },
+      { key: 'uv_dtf',          label: 'UV-DTF production',        desc: 'UV-DTF transfer queue',
+        icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M15.59 14.37a6 6 0 0 1-5.84 7.38v-4.8m5.84-2.58a14.98 14.98 0 0 0 6.16-12.12A14.98 14.98 0 0 0 9.63 8.41m5.96 5.96a14.93 14.93 0 0 1-5.84 2.58m-.12-8.54a6 6 0 0 0-7.38 5.84h4.8m2.58-5.84a14.93 14.93 0 0 0-2.58 5.84m2.7 2.7c-.1.02-.21.04-.31.06a15.09 15.09 0 0 1-2.45-2.45 14.9 14.9 0 0 1 .06-.31M16.5 9a1.5 1.5 0 1 1-3 0 1.5 1.5 0 0 1 3 0Z"/></svg>' },
+      { key: 'vinyl_stickers',  label: 'Vinyl stickers',           desc: 'Vinyl sticker print and finish queue',
+        icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M9.57 3H5.25A2.25 2.25 0 0 0 3 5.25v4.32c0 .6.24 1.17.66 1.59l9.58 9.58c.7.7 1.78.87 2.6.33a18.1 18.1 0 0 0 5.22-5.22c.54-.83.37-1.91-.33-2.6L11.16 3.66A2.25 2.25 0 0 0 9.57 3ZM6 6h.01"/></svg>' },
+      { key: 'sublimation',     label: 'Sublimation',              desc: 'Sublimation production queue',
+        icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M9.53 16.12a3 3 0 0 0-5.78 1.13 2.25 2.25 0 0 1-2.4 2.24 4.5 4.5 0 0 0 8.4-2.24c0-.4-.08-.78-.22-1.13Zm0 0a16 16 0 0 0 3.39-1.62m-5.04-.03a16 16 0 0 1 1.62-3.4m3.42 3.42a16 16 0 0 0 4.76-4.64l3.88-5.82a1.15 1.15 0 0 0-1.6-1.59L14.15 6.32a16 16 0 0 0-4.65 4.76m3.42 3.42a6.78 6.78 0 0 0-3.42-3.42"/></svg>' },
+      { key: 'artwork_setup',   label: 'Artwork setup',            desc: 'Artwork checks, file prep, setup queue',
+        icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="m16.86 4.49 1.69-1.69a1.875 1.875 0 1 1 2.65 2.65L10.58 16.07a4.5 4.5 0 0 1-1.9 1.13L6 18l.8-2.69a4.5 4.5 0 0 1 1.13-1.9l8.93-8.93Zm0 0L19.5 7.13M18 14v4.75A2.25 2.25 0 0 1 15.75 21H5.25A2.25 2.25 0 0 1 3 18.75V8.25A2.25 2.25 0 0 1 5.25 6H10"/></svg>' },
+    ];
+    const STATUSES = [
+      { key: 'not_busy',      label: 'Not Busy' },
+      { key: 'moderate',      label: 'Moderate' },
+      { key: 'busy',          label: 'Busy' },
+      { key: 'full_capacity', label: 'Full Capacity' },
+    ];
+
+    function authHeaders(extra = {}) {
+      return Object.assign({ 'X-Admin-Pass': ADMIN_PASS }, extra);
+    }
+    function fmtTime(iso) {
+      if (!iso) return '—';
+      try {
+        const d = new Date(iso);
+        const day = String(d.getDate()).padStart(2, '0');
+        const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+        return `${day} ${months[d.getMonth()]} ${d.getFullYear()}, ${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`;
+      } catch { return iso; }
+    }
+    function statusLabel(key) { const s = STATUSES.find(s => s.key === key); return s ? s.label : 'Unknown'; }
+    function toast(msg, isError = false) {
+      const el = document.getElementById('toast');
+      el.textContent = msg;
+      el.classList.toggle('error', isError);
+      el.classList.add('show');
+      clearTimeout(window.__toastTimer);
+      window.__toastTimer = setTimeout(() => el.classList.remove('show'), 2400);
+    }
+    function progressClass(pct) {
+      if (pct >= 100) return 'p-full';
+      if (pct >= 75) return 'p-high';
+      if (pct >= 40) return 'p-mid';
+      return 'p-low';
+    }
+
+    async function loadStatuses() {
+      const btn = document.getElementById('refreshBtn');
+      btn.disabled = true;
+      try {
+        const r = await fetch('/api/statuses', { headers: authHeaders() });
+        const text = await r.text();
+        let body; try { body = JSON.parse(text); } catch { body = { error: text }; }
+        if (!r.ok) throw new Error(`${r.status} — ${body.error || 'unknown error'}`);
+        render(body);
+      } catch (e) {
+        const el = document.getElementById('content');
+        el.classList.remove('loading');
+        el.innerHTML = `<div class="error-box"><strong>Could not load statuses</strong><code>${e.message}</code></div>`;
+      } finally {
+        btn.disabled = false;
+      }
+    }
+
+    function render(data) {
+      const content = document.getElementById('content');
+      content.classList.remove('loading');
+      content.innerHTML = '';
+      const grid = document.createElement('div');
+      grid.className = 'grid';
+
+      DEPARTMENTS.forEach(dept => {
+        const current = (data[dept.key]?.value || '').toLowerCase();
+        const updatedAt = data[`${dept.key}_updated`]?.value || '';
+        const card = document.createElement('div');
+        card.className = 'card' + (dept.overall ? ' overall' : '') + (dept.capacity ? ' featured' : '');
+        const pillClass = STATUSES.find(s => s.key === current) ? `s-${current}` : 's-unknown';
+
+        let capacityHtml = '';
+        if (dept.capacity) {
+          const total = Number(data.dtf_capacity_total?.value) || 0;
+          const used  = Number(data.dtf_capacity_used?.value) || 0;
+          const pct = total > 0 ? Math.min(100, Math.round((used / total) * 100)) : 0;
+          const widthPct = total > 0 ? Math.min(100, (used / total) * 100) : 0;
+          capacityHtml = `
+            <div class="capacity-section">
+              <div class="capacity-head">
+                <strong>Daily capacity</strong>
+                <span class="pct">${used}m / ${total}m · ${pct}% full</span>
+              </div>
+              <div class="progress"><div class="${progressClass(pct)}" style="width:${widthPct}%"></div></div>
+              <div class="capacity-inputs">
+                <div class="input-group">
+                  <label>Daily capacity</label>
+                  <div class="input-row">
+                    <input type="number" id="cap-total" value="${total}" min="0" max="100000" step="10" />
+                    <span class="unit">m</span>
+                  </div>
+                </div>
+                <div class="input-group">
+                  <label>Current queue</label>
+                  <div class="input-row">
+                    <input type="number" id="cap-used" value="${used}" min="0" max="100000" step="1" />
+                    <span class="unit">m</span>
+                  </div>
+                </div>
+              </div>
+              <div class="quick-row">
+                <button class="quick-btn" data-bump="5">+5m</button>
+                <button class="quick-btn" data-bump="10">+10m</button>
+                <button class="quick-btn" data-bump="25">+25m</button>
+                <button class="quick-btn" data-bump="-10">−10m</button>
+                <button class="quick-btn danger" data-bump="reset">Reset to 0</button>
+                <button class="quick-btn" id="cap-save" style="margin-left:auto;background:#202223;color:#fff;border-color:#202223">Save</button>
+              </div>
+            </div>
+          `;
+        }
+
+        card.innerHTML = `
+          <div class="card-head">
+            <div class="card-title">
+              <div class="card-icon">${dept.icon}</div>
+              <h2>${dept.label}</h2>
+            </div>
+            <span class="pill ${pillClass}"><span class="dot"></span>${statusLabel(current)}</span>
+          </div>
+          <p class="meta">${dept.desc} · Updated ${fmtTime(updatedAt)}</p>
+          <div class="btnrow" data-dept="${dept.key}">
+            ${STATUSES.map(s => `
+              <button class="btn s-${s.key}${current === s.key ? ' active' : ''}" data-status="${s.key}">${s.label}</button>
+            `).join('')}
+          </div>
+          ${capacityHtml}
+        `;
+        grid.appendChild(card);
+      });
+      content.appendChild(grid);
+
+      // Status button clicks
+      content.querySelectorAll('.btnrow').forEach(row => {
+        row.addEventListener('click', async (e) => {
+          const btn = e.target.closest('button[data-status]');
+          if (!btn) return;
+          const dept = row.dataset.dept;
+          const status = btn.dataset.status;
+          row.querySelectorAll('button').forEach(b => b.disabled = true);
+          try {
+            const r = await fetch('/api/update', {
+              method: 'POST',
+              headers: authHeaders({ 'Content-Type': 'application/json' }),
+              body: JSON.stringify({ department: dept, status }),
+            });
+            const result = await r.json();
+            if (!r.ok) throw new Error(result.error || 'Update failed');
+            toast(`${DEPARTMENTS.find(d => d.key === dept).label} → ${statusLabel(status)}`);
+            await loadStatuses();
+          } catch (err) {
+            toast(err.message, true);
+            row.querySelectorAll('button').forEach(b => b.disabled = false);
+          }
+        });
+      });
+
+      // Capacity controls
+      const totalInput = document.getElementById('cap-total');
+      const usedInput = document.getElementById('cap-used');
+      const saveBtn = document.getElementById('cap-save');
+      if (totalInput && usedInput && saveBtn) {
+        document.querySelectorAll('.quick-btn[data-bump]').forEach(b => {
+          b.addEventListener('click', () => {
+            const bump = b.dataset.bump;
+            if (bump === 'reset') usedInput.value = 0;
+            else usedInput.value = Math.max(0, (Number(usedInput.value) || 0) + Number(bump));
+          });
+        });
+        saveBtn.addEventListener('click', async () => {
+          saveBtn.disabled = true;
+          try {
+            const total = Number(totalInput.value);
+            const used = Number(usedInput.value);
+            if (!Number.isFinite(total) || !Number.isFinite(used)) throw new Error('Invalid numbers');
+            const r = await fetch('/api/capacity', {
+              method: 'POST',
+              headers: authHeaders({ 'Content-Type': 'application/json' }),
+              body: JSON.stringify({ total, used }),
+            });
+            const result = await r.json();
+            if (!r.ok) throw new Error(result.error || 'Save failed');
+            toast(`Capacity saved: ${used}m / ${total}m`);
+            await loadStatuses();
+          } catch (err) {
+            toast(err.message, true);
+            saveBtn.disabled = false;
+          }
+        });
+      }
+    }
+
+    document.getElementById('refreshBtn').addEventListener('click', loadStatuses);
+    loadStatuses();
+  </script>
+</body>
+</html>
