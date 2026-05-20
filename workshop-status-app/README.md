@@ -90,9 +90,11 @@ If you want to change anything (add a department, tweak the design, add new stat
 
 ```
 workshop-status-app/
-├── server.js              ← Backend: handles API calls, writes to Shopify
+├── api/
+│   └── index.js           ← Backend: handles API calls, writes to Shopify (Vercel entry point)
 ├── public/
 │   └── app.html           ← The dashboard UI shown inside Shopify admin
+├── server.js              ← Tiny shim for local dev — imports api/index.js
 ├── package.json           ← Node.js dependencies
 ├── vercel.json            ← Tells Vercel how to deploy
 ├── .env.example           ← Template for environment variables (copy to .env locally)
@@ -107,8 +109,16 @@ If you ever want to run this on your own computer:
 1. Install Node.js v18+ (nodejs.org)
 2. In a terminal in this folder: `npm install`
 3. Copy `.env.example` to `.env` and fill in the real values
-4. Run: `npm start`
+4. Run: `npm start` (this runs `node api/index.js`)
 5. Open `http://localhost:3000` in your browser
+
+## Updating the existing deployment
+
+If you've already deployed this app and need to push fixes (like the Vercel 404 fix that moved server code to `api/index.js`):
+
+1. Upload all updated files to your GitHub repository — make sure `api/index.js` is present
+2. Vercel auto-deploys on push, takes ~1 minute
+3. Refresh the app inside Shopify admin
 
 ---
 

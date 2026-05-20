@@ -1,7 +1,4 @@
 // Workshop Status — Shopify Custom App backend (Vercel serverless entry point)
-// Reads/writes the shop's workshop_status metafields. Designed to be embedded
-// inside Shopify admin via a Custom App's App URL.
-
 import express from 'express';
 import path from 'node:path';
 import fs from 'node:fs';
@@ -23,15 +20,13 @@ if (!SHOPIFY_SHOP_DOMAIN) missing.push('SHOPIFY_SHOP_DOMAIN');
 if (!SHOPIFY_ACCESS_TOKEN) missing.push('SHOPIFY_ACCESS_TOKEN');
 if (!ADMIN_PASS) missing.push('ADMIN_PASS');
 if (missing.length) {
-  const msg = `Missing required env vars: ${missing.join(', ')}`;
-  console.error(msg);
+  console.error(`Missing required env vars: ${missing.join(', ')}`);
   if (!process.env.VERCEL) process.exit(1);
 }
 
 const API_VERSION = '2025-01';
 const GRAPHQL_URL = `https://${SHOPIFY_SHOP_DOMAIN}/admin/api/${API_VERSION}/graphql.json`;
 
-// Load the HTML template once at module load.
 const HTML_TEMPLATE = fs.readFileSync(
   path.join(__dirname, '..', 'public', 'app.html'),
   'utf8'
@@ -63,7 +58,6 @@ async function shopifyGraphQL(query, variables = {}) {
 const app = express();
 app.use(express.json());
 
-// Allow Shopify admin to embed this app in an iframe
 app.use((_req, res, next) => {
   res.setHeader(
     'Content-Security-Policy',
@@ -86,7 +80,6 @@ function requireAuth(req, res, next) {
   next();
 }
 
-// ── Serve the embedded dashboard ────────────────────────────────────────────
 app.get('/', (_req, res) => {
   if (!ADMIN_PASS) {
     return res.status(500).send('Server not configured — missing ADMIN_PASS env var on Vercel');
@@ -94,7 +87,6 @@ app.get('/', (_req, res) => {
   res.send(HTML_TEMPLATE.replace(/\{\{ADMIN_PASS\}\}/g, ADMIN_PASS));
 });
 
-// ── API: read current statuses ──────────────────────────────────────────────
 app.get('/api/statuses', requireAuth, async (_req, res) => {
   try {
     const query = `
@@ -123,7 +115,6 @@ app.get('/api/statuses', requireAuth, async (_req, res) => {
   }
 });
 
-// ── API: update a department status ─────────────────────────────────────────
 const VALID_DEPARTMENTS = ['overall', 'dtf', 'uv_dtf', 'vinyl_stickers', 'sublimation', 'artwork_setup'];
 const VALID_STATUSES = ['not_busy', 'moderate', 'busy', 'full_capacity'];
 
@@ -152,20 +143,8 @@ app.post('/api/update', requireAuth, async (req, res) => {
     `;
     const variables = {
       metafields: [
-        {
-          ownerId: shopGid,
-          namespace: 'workshop_status',
-          key: department,
-          type: 'single_line_text_field',
-          value: status,
-        },
-        {
-          ownerId: shopGid,
-          namespace: 'workshop_status',
-          key: `${department}_updated`,
-          type: 'date_time',
-          value: nowIso,
-        },
+        { ownerId: shopGid, namespace: 'workshop_status', key: department, type: 'single_line_text_field', value: status },
+        { ownerId: shopGid, namespace: 'workshop_status', key: `${department}_updated`, type: 'date_time', value: nowIso },
       ],
     };
 
@@ -181,9 +160,33 @@ app.post('/api/update', requireAuth, async (req, res) => {
   }
 });
 
+// Debug endpoint — protected by ADMIN_PASS. Shows env var presence
+// (not the full values) and a live Shopify test result.
+app.get('/api/debug', requireAuth, async (_req, res) => {
+  const mask = (s) => {
+    if (!s) return null;
+    if (s.length < 12) return '***SHORT***';
+    return `${s.slice(0, 6)}_${s.slice(-4)} (length ${s.length})`;
+  };
+  const info = {
+    SHOPIFY_SHOP_DOMAIN: SHOPIFY_SHOP_DOMAIN || '(missing)',
+    SHOPIFY_ACCESS_TOKEN: mask(SHOPIFY_ACCESS_TOKEN),
+    ADMIN_PASS: mask(ADMIN_PASS),
+    GRAPHQL_URL,
+    apiVersion: API_VERSION,
+    deploymentRegion: process.env.VERCEL_REGION || 'local',
+  };
+  try {
+    const test = await shopifyGraphQL('{ shop { name id myshopifyDomain } }');
+    info.shopifyTest = { ok: true, shop: test.data?.shop };
+  } catch (e) {
+    info.shopifyTest = { ok: false, error: e.message };
+  }
+  res.json(info);
+});
+
 app.get('/healthz', (_req, res) => res.send('ok'));
 
-// Local development only — Vercel handles HTTP itself in serverless mode
 if (!process.env.VERCEL) {
   app.listen(PORT, () => {
     console.log(`Workshop Status app on port ${PORT}`);
