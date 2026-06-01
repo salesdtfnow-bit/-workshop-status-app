@@ -501,7 +501,7 @@ async function getOrderQueuedMeters(orderGid) {
   const data = await shopifyGraphQL(`
     query OrderQueued($id: ID!) {
       order(id: $id) {
-        metafield(namespace: "custom", key: "dtf_queued_cm") { value }
+        metafield(namespace: "custom", key: "custom_dtf_queued_cm") { value }
       }
     }
   `, { id: orderGid });
@@ -521,7 +521,7 @@ async function setOrderQueuedMeters(orderGid, meters) {
     metafields: [{
       ownerId: orderGid,
       namespace: 'custom',
-      key: 'dtf_queued_cm',
+      key: 'custom_dtf_queued_cm',
       type: 'number_decimal',
       value: String(Number(meters.toFixed(2))),
     }],
