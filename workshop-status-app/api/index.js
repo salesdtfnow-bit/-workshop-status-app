@@ -19,7 +19,31 @@ const {
 
 const API_VERSION = '2025-01';
 const GRAPHQL_URL = `https://${SHOPIFY_SHOP_DOMAIN}/admin/api/${API_VERSION}/graphql.json`;
-const OAUTH_SCOPES = 'read_content,write_content,read_metaobjects,write_metaobjects';
+const OAUTH_SCOPES = 'read_content,write_content,read_metaobjects,write_metaobjects,read_orders,write_orders';
+
+// DTF SKU → cm consumed on the daily capacity (per single unit ordered).
+// Multiplied by line-item quantity at runtime, rounded to int.
+const DTF_CM = {
+  // Gang sheets (length in cm)
+  'DTF_GANG_100': 100,
+  'DTF_GANG_125': 125,
+  'DTF_GANG_150': 150,
+  'DTF_GANG_175': 175,
+  'DTF_GANG_200': 200,
+  // Individual transfers (longer side in cm)
+  '5x5-DTF': 5,
+  '7x7-DTF': 7,
+  '10x10-DTF': 10,
+  '12.5x12.5-DTF': 12.5,
+  '15x15-DTF': 15,
+  '17x17-DTF': 17,
+  '25x25-DTF': 25,
+  '25x55-DTF': 55,
+  '28x28-DTF': 28,
+  // A-sized sheets (longer side in cm)
+  'A4-DTF': 30,
+  'A3-DTF': 42,
+};
 
 const HTML_TEMPLATE = fs.readFileSync(
   path.join(__dirname, '..', 'public', 'app.html'),
@@ -55,7 +79,12 @@ async function getShopGid() {
 }
 
 const app = express();
-app.use(express.json());
+// Capture the raw body so /api/webhooks/orders can verify Shopify's HMAC.
+app.use(express.json({
+  verify: (req, _res, buf) => {
+    req.rawBody = buf;
+  },
+}));
 
 app.use((_req, res, next) => {
   if (SHOPIFY_SHOP_DOMAIN) {
@@ -98,7 +127,67 @@ app.get('/install', (req, res) => {
   res.redirect(url);
 });
 
-// ─── OAuth: step 2 — exchange code for token ──────────────────────────────
+// ─── OAuth: step 2 — exchange code for token, then auto-register webhooks ─
+async function registerOrderWebhooks(shop, accessToken, ourHost) {
+  const url = `https://${shop}/admin/api/${API_VERSION}/graphql.json`;
+  const callbackUrl = `https://${ourHost}/api/webhooks/orders`;
+  const topics = ['ORDERS_PAID', 'ORDERS_FULFILLED', 'ORDERS_CANCELLED'];
+  const results = [];
+
+  const call = async (query, variables) => {
+    const r = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Shopify-Access-Token': accessToken },
+      body: JSON.stringify({ query, variables }),
+    });
+    return r.json();
+  };
+
+  // Fetch existing subscriptions so we don't create duplicates
+  const existingData = await call(`
+    {
+      webhookSubscriptions(first: 100) {
+        edges {
+          node {
+            id
+            topic
+            endpoint { ... on WebhookHttpEndpoint { callbackUrl } }
+          }
+        }
+      }
+    }
+  `);
+  const existing = existingData.data?.webhookSubscriptions?.edges || [];
+
+  for (const topic of topics) {
+    const already = existing.some(e =>
+      e.node.topic === topic && e.node.endpoint?.callbackUrl === callbackUrl
+    );
+    if (already) {
+      results.push({ topic, status: 'already subscribed' });
+      continue;
+    }
+    const created = await call(`
+      mutation Sub($topic: WebhookSubscriptionTopic!, $sub: WebhookSubscriptionInput!) {
+        webhookSubscriptionCreate(topic: $topic, webhookSubscription: $sub) {
+          webhookSubscription { id }
+          userErrors { field message }
+        }
+      }
+    `, {
+      topic,
+      sub: { callbackUrl, format: 'JSON' },
+    });
+    const errs = created.data?.webhookSubscriptionCreate?.userErrors || [];
+    if (errs.length) {
+      results.push({ topic, status: 'error', errors: errs });
+    } else {
+      results.push({ topic, status: 'created', id: created.data?.webhookSubscriptionCreate?.webhookSubscription?.id });
+    }
+  }
+  return results;
+}
+
 app.get('/auth/callback', async (req, res) => {
   const { shop, code } = req.query;
   if (!shop || !code) {
@@ -118,16 +207,35 @@ app.get('/auth/callback', async (req, res) => {
     if (!json.access_token) {
       return res.status(500).send(`<pre>Token exchange failed:\n${JSON.stringify(json, null, 2)}</pre>`);
     }
+
+    // Register order webhooks using the fresh access token (works even before
+    // the user has saved the new token to Vercel env vars).
+    let webhookResults = [];
+    try {
+      webhookResults = await registerOrderWebhooks(shop, json.access_token, req.get('host'));
+    } catch (e) {
+      webhookResults = [{ topic: 'all', status: 'error', error: e.message }];
+    }
+    const webhookRows = webhookResults.map(r => {
+      const colour = r.status === 'created' ? '#15803d' : r.status === 'already subscribed' ? '#6b7280' : '#b91c1c';
+      const detail = r.errors ? ' — ' + JSON.stringify(r.errors) : r.error ? ' — ' + r.error : '';
+      return `<li style="color:${colour}"><code>${r.topic}</code>: ${r.status}${detail}</li>`;
+    }).join('');
+
     res.send(`<!doctype html>
       <html><head><meta charset="utf-8"><title>OAuth complete</title>
       <style>body{font-family:-apple-system,sans-serif;max-width:720px;margin:40px auto;padding:0 20px;line-height:1.6}
       .token{background:#fef3c7;border:2px solid #d97706;padding:20px;border-radius:8px;font-family:monospace;font-size:16px;word-break:break-all;user-select:all;margin:20px 0}
-      ol{padding-left:20px} li{margin:8px 0}</style></head><body>
+      .webhooks{background:#f3f4f6;padding:16px 20px;border-radius:8px;margin:20px 0}
+      ol,ul{padding-left:20px} li{margin:8px 0}</style></head><body>
       <h1>Success! Your Admin API access token</h1>
       <div class="token">${json.access_token}</div>
+      <h2>Webhook subscriptions</h2>
+      <div class="webhooks"><ul>${webhookRows}</ul></div>
+      <h2>Next steps</h2>
       <ol>
-        <li>Click the yellow box, copy the token.</li>
-        <li>Vercel → Settings → Environment Variables → SHOPIFY_ACCESS_TOKEN → paste → save.</li>
+        <li>Click the yellow box above, copy the token.</li>
+        <li>Vercel → Settings → Environment Variables → SHOPIFY_ACCESS_TOKEN → paste → save (Production scope!).</li>
         <li>Deployments → ⋯ on latest → Redeploy (untick build cache).</li>
         <li>Refresh the app inside Shopify admin.</li>
       </ol>
@@ -146,7 +254,15 @@ app.get('/', (_req, res) => {
     return res.send(`<!doctype html><html><body style="font-family:sans-serif;padding:40px;max-width:600px;margin:auto">
       <h1>Setup needed</h1>
       <p>This app needs an Admin API access token before it can read or write metafields.</p>
-      <p><a href="/install" style="display:inline-block;padding:12px 24px;background:#202223;color:#fff;border-radius:8px;text-decoration:none;font-weight:600">Run OAuth install</a></p>
+      <p>
+        <a href="/install" target="_top"
+           style="display:inline-block;padding:12px 24px;background:#202223;color:#fff;border-radius:8px;text-decoration:none;font-weight:600">
+          Run OAuth install (opens at top level)
+        </a>
+      </p>
+      <p style="margin-top:14px;font-size:13px;color:#6b7280">If clicking the button inside Shopify admin doesn't work, open this URL in a new browser tab instead:<br>
+        <code style="background:#f3f4f6;padding:4px 6px;border-radius:4px;user-select:all">https://workshop-status-app.vercel.app/install</code>
+      </p>
       </body></html>`);
   }
   res.send(HTML_TEMPLATE.replace(/\{\{ADMIN_PASS\}\}/g, ADMIN_PASS));
@@ -313,6 +429,166 @@ app.get('/api/debug', requireAuth, async (_req, res) => {
     info.shopifyTest = { ok: false, error: e.message };
   }
   res.json(info);
+});
+
+// ─── Webhook: orders/paid + orders/fulfilled + orders/cancelled ───────────
+// Auto-updates dtfcapacity.used based on DTF SKUs in the order.
+// Uses an order-level metafield workshop_status.dtf_queued_cm as an
+// idempotency marker — each order can only add once and only subtract once.
+function verifyShopifyHmac(req) {
+  const hmac = req.headers['x-shopify-hmac-sha256'];
+  if (!hmac || !req.rawBody || !SHOPIFY_API_SECRET) return false;
+  const expected = crypto.createHmac('sha256', SHOPIFY_API_SECRET)
+    .update(req.rawBody)
+    .digest('base64');
+  try {
+    return crypto.timingSafeEqual(
+      Buffer.from(expected),
+      Buffer.from(hmac)
+    );
+  } catch {
+    return false;
+  }
+}
+
+function lineItemsToCm(lineItems = []) {
+  let total = 0;
+  for (const item of lineItems) {
+    const sku = item.sku;
+    const qty = Number(item.quantity) || 0;
+    const cmPerUnit = DTF_CM[sku];
+    if (cmPerUnit && qty > 0) {
+      total += Math.round(cmPerUnit * qty);
+    }
+  }
+  return total;
+}
+
+async function getOrderQueuedCm(orderGid) {
+  const data = await shopifyGraphQL(`
+    query OrderQueued($id: ID!) {
+      order(id: $id) {
+        metafield(namespace: "custom", key: "dtf_queued_cm") { value }
+      }
+    }
+  `, { id: orderGid });
+  const v = data.data?.order?.metafield?.value;
+  return v ? Number(v) : 0;
+}
+
+async function setOrderQueuedCm(orderGid, cm) {
+  const mutation = `
+    mutation SetOrderQueued($metafields: [MetafieldsSetInput!]!) {
+      metafieldsSet(metafields: $metafields) {
+        userErrors { field message }
+      }
+    }
+  `;
+  const variables = {
+    metafields: [{
+      ownerId: orderGid,
+      namespace: 'custom',
+      key: 'dtf_queued_cm',
+      type: 'number_integer',
+      value: String(Math.round(cm)),
+    }],
+  };
+  const data = await shopifyGraphQL(mutation, variables);
+  const errors = data.data?.metafieldsSet?.userErrors || [];
+  if (errors.length) throw new Error('metafieldsSet errors: ' + JSON.stringify(errors));
+}
+
+async function readCapacityUsed() {
+  const data = await shopifyGraphQL(`
+    {
+      shop {
+        used: metafield(namespace: "dtfcapacity", key: "used") { value }
+      }
+    }
+  `);
+  const v = data.data?.shop?.used?.value;
+  return v ? Number(v) : 0;
+}
+
+async function writeCapacityUsed(newUsed) {
+  const shopGid = await getShopGid();
+  const mutation = `
+    mutation SetUsed($metafields: [MetafieldsSetInput!]!) {
+      metafieldsSet(metafields: $metafields) {
+        userErrors { field message }
+      }
+    }
+  `;
+  const variables = {
+    metafields: [
+      {
+        ownerId: shopGid,
+        namespace: 'dtfcapacity',
+        key: 'used',
+        type: 'number_integer',
+        value: String(Math.max(0, Math.round(newUsed))),
+      },
+      {
+        ownerId: shopGid,
+        namespace: 'workshop_status',
+        key: 'dtf_updated',
+        type: 'date_time',
+        value: new Date().toISOString(),
+      },
+    ],
+  };
+  const data = await shopifyGraphQL(mutation, variables);
+  const errors = data.data?.metafieldsSet?.userErrors || [];
+  if (errors.length) throw new Error('writeCapacityUsed errors: ' + JSON.stringify(errors));
+}
+
+app.post('/api/webhooks/orders', async (req, res) => {
+  // Always 200 quickly so Shopify doesn't retry — handle errors silently.
+  if (!verifyShopifyHmac(req)) {
+    console.error('Webhook HMAC verification failed');
+    return res.status(401).send('Invalid HMAC');
+  }
+  const topic = req.headers['x-shopify-topic']; // e.g. "orders/paid"
+  const order = req.body;
+  const orderId = order?.id;
+  if (!orderId) return res.status(200).send('no order id');
+
+  const orderGid = `gid://shopify/Order/${orderId}`;
+  try {
+    if (topic === 'orders/paid') {
+      const cm = lineItemsToCm(order.line_items);
+      if (cm <= 0) return res.status(200).send('no dtf');
+
+      const alreadyQueued = await getOrderQueuedCm(orderGid);
+      if (alreadyQueued > 0) {
+        console.log(`Order ${orderId} already queued at ${alreadyQueued}cm — skipping`);
+        return res.status(200).send('already queued');
+      }
+
+      const current = await readCapacityUsed();
+      await writeCapacityUsed(current + cm);
+      await setOrderQueuedCm(orderGid, cm);
+      console.log(`Order ${orderId} paid → +${cm}cm (queue ${current}→${current + cm})`);
+
+    } else if (topic === 'orders/fulfilled' || topic === 'orders/cancelled') {
+      const queuedCm = await getOrderQueuedCm(orderGid);
+      if (queuedCm <= 0) {
+        console.log(`Order ${orderId} ${topic} but no queued cm — skipping`);
+        return res.status(200).send('not queued');
+      }
+      const current = await readCapacityUsed();
+      await writeCapacityUsed(Math.max(0, current - queuedCm));
+      await setOrderQueuedCm(orderGid, 0);
+      console.log(`Order ${orderId} ${topic} → -${queuedCm}cm (queue ${current}→${Math.max(0, current - queuedCm)})`);
+
+    } else {
+      console.log(`Webhook topic ${topic} not handled`);
+    }
+    res.status(200).send('ok');
+  } catch (e) {
+    console.error('Webhook handler error:', e);
+    res.status(200).send('handled with errors');
+  }
 });
 
 app.get('/healthz', (_req, res) => res.send('ok'));

@@ -92,6 +92,63 @@
     assign artwork_updated = shop.metafields.custom.workshop_status_artwork_setup_updated.value | default: shop.metafields.custom.workshop_status_artwork_setup_updated | default: ''
   endif
 
+  comment
+  endcomment
+  assign dtf_cap_total = shop.metafields.dtfcapacity.total.value | default: shop.metafields.dtfcapacity.total | default: 0 | plus: 0
+  assign dtf_cap_used  = shop.metafields.dtfcapacity.used.value  | default: shop.metafields.dtfcapacity.used  | default: 0 | plus: 0
+  assign dtf_cap_pct = 0
+  assign dtf_cap_pct_clamped = 0
+  if dtf_cap_total > 0
+    assign dtf_cap_pct_raw = dtf_cap_used | times: 100 | divided_by: dtf_cap_total
+    assign dtf_cap_pct = dtf_cap_pct_raw
+    if dtf_cap_pct_raw > 100
+      assign dtf_cap_pct_clamped = 100
+    else
+      assign dtf_cap_pct_clamped = dtf_cap_pct_raw
+    endif
+  endif
+
+  assign dtf_cap_color = 'green'
+  if dtf_cap_pct >= 100
+    assign dtf_cap_color = 'red'
+  elsif dtf_cap_pct >= 75
+    assign dtf_cap_color = 'orange'
+  elsif dtf_cap_pct >= 40
+    assign dtf_cap_color = 'amber'
+  endif
+
+  comment
+  endcomment
+  assign dtf_dispatch_msg = ''
+  if dtf_cap_total > 0
+    assign cutoff_hour = 13
+    assign now_hour = 'now' | date: '%H' | plus: 0
+    if dtf_cap_used <= dtf_cap_total
+      if now_hour < cutoff_hour
+        assign dtf_dispatch_msg = 'Likely dispatched today'
+      else
+        assign dtf_dispatch_msg = 'Likely dispatched tomorrow'
+      endif
+    else
+      assign over = dtf_cap_used | minus: dtf_cap_total
+      assign extra_days_raw = over | divided_by: dtf_cap_total
+      assign extra_days_mod = over | modulo: dtf_cap_total
+      assign extra_days = extra_days_raw | plus: 1
+      if extra_days_mod == 0
+        assign extra_days = extra_days_raw
+      endif
+      if now_hour < cutoff_hour
+        assign dtf_dispatch_msg = 'Likely dispatched in ' | append: extra_days | append: ' day'
+      else
+        assign next_days = extra_days | plus: 1
+        assign dtf_dispatch_msg = 'Likely dispatched in ' | append: next_days | append: ' days'
+      endif
+      if extra_days > 1
+        assign dtf_dispatch_msg = dtf_dispatch_msg | append: 's'
+      endif
+    endif
+  endif
+
   if overall_updated == blank
     assign overall_updated = overall_mf.value.updated_at | default: ''
   endif
@@ -364,6 +421,201 @@
     opacity: 0.7;
   }
 
+  #WS3-{{ section.id }} .ws-cap {
+    margin-bottom: 14px;
+  }
+  #WS3-{{ section.id }} .ws-cap-head {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 6px;
+    margin-bottom: 8px;
+  }
+  #WS3-{{ section.id }} .ws-cap-label {
+    font-size: 0.78rem;
+    font-weight: 600;
+    color: {{ section.settings.text_color }};
+  }
+  #WS3-{{ section.id }} .ws-cap-figs {
+    font-size: 0.74rem;
+    color: {{ section.settings.muted_text_color }};
+    font-variant-numeric: tabular-nums;
+  }
+  #WS3-{{ section.id }} .ws-cap-bar {
+    position: relative;
+    background: rgba(0,0,0,0.08);
+    border-radius: 999px;
+    height: 10px;
+    overflow: hidden;
+    display: block;
+    width: 100%;
+  }
+  #WS3-{{ section.id }} .ws-cap-fill {
+    position: absolute;
+    top: 0;
+    left: 0;
+    height: 10px;
+    border-radius: 999px;
+    transition: width 0.4s ease;
+    display: block;
+    overflow: hidden;
+    background: linear-gradient(
+      90deg,
+      #22c55e 0%,
+      #84cc16 25%,
+      #eab308 50%,
+      #f97316 75%,
+      #ef4444 100%
+    );
+  }
+  /* Legacy color modifier classes — keep the same green→red gradient regardless. */
+  #WS3-{{ section.id }} .ws-cap-fill.ws-cap-green,
+  #WS3-{{ section.id }} .ws-cap-fill.ws-cap-amber,
+  #WS3-{{ section.id }} .ws-cap-fill.ws-cap-orange,
+  #WS3-{{ section.id }} .ws-cap-fill.ws-cap-red {
+    background: linear-gradient(
+      90deg,
+      #22c55e 0%,
+      #84cc16 25%,
+      #eab308 50%,
+      #f97316 75%,
+      #ef4444 100%
+    );
+  }
+  /* Left-to-right shimmer travelling across the fill */
+  #WS3-{{ section.id }} .ws-cap-fill::after {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 60%;
+    height: 100%;
+    background: linear-gradient(
+      90deg,
+      rgba(255,255,255,0) 0%,
+      rgba(255,255,255,0.55) 50%,
+      rgba(255,255,255,0) 100%
+    );
+    animation: wsp3-shimmer 2.6s linear infinite;
+    pointer-events: none;
+  }
+  @keyframes wsp3-shimmer {
+    0%   { transform: translateX(-100%); }
+    100% { transform: translateX(220%); }
+  }
+
+  /* Hero pills — larger, more prominent */
+  #WS3-{{ section.id }} .ws-pill-hero {
+    padding: 7px 14px;
+    font-size: 0.95rem;
+    font-weight: 700;
+    border-radius: 999px;
+    letter-spacing: -0.005em;
+  }
+  #WS3-{{ section.id }} .ws-pill-hero .ws-pill-dot {
+    width: 8px;
+    height: 8px;
+  }
+
+  /* Per-card CTA button (one per department) */
+  #WS3-{{ section.id }} .ws-card-cta {
+    margin-top: 12px;
+    padding-top: 12px;
+    border-top: 0.5px dashed rgba(0,0,0,0.08);
+    display: flex;
+    justify-content: flex-end;
+  }
+  #WS3-{{ section.id }} .ws-card-cta-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 8px 14px;
+    border-radius: 999px;
+    background: {{ section.settings.text_color }};
+    color: #fff;
+    font-size: 0.85rem;
+    font-weight: 600;
+    text-decoration: none;
+    letter-spacing: -0.005em;
+    transition: transform .15s ease, opacity .15s ease, box-shadow .15s ease;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.08);
+  }
+  #WS3-{{ section.id }} .ws-card-cta-btn:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 4px 10px rgba(0,0,0,0.14);
+    opacity: 0.95;
+  }
+  #WS3-{{ section.id }} .ws-card-cta-btn svg {
+    width: 14px;
+    height: 14px;
+  }
+
+  /* Place order CTA */
+  #WS3-{{ section.id }} .ws-cta-wrap {
+    text-align: center;
+    margin-top: 18px;
+    animation: wsp3-fadeUp 0.4s ease 0.30s both;
+  }
+  #WS3-{{ section.id }} .ws-cta-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 14px 28px;
+    border-radius: 999px;
+    background: #15803d;
+    color: #fff;
+    text-decoration: none;
+    font-size: 1rem;
+    font-weight: 600;
+    letter-spacing: -0.01em;
+    box-shadow: 0 4px 12px rgba(21,128,61,0.18);
+    transition: transform .15s ease, box-shadow .15s ease, background .15s ease;
+  }
+  #WS3-{{ section.id }} .ws-cta-btn:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 6px 18px rgba(21,128,61,0.28);
+    background: #166534;
+  }
+  #WS3-{{ section.id }} .ws-cta-btn svg {
+    width: 16px;
+    height: 16px;
+  }
+  #WS3-{{ section.id }} .ws-cta-note {
+    margin: 8px 0 0;
+    font-size: 0.82rem;
+    color: {{ section.settings.muted_text_color }};
+  }
+
+  /* Honour user preference for reduced motion */
+  @media (prefers-reduced-motion: reduce) {
+    #WS3-{{ section.id }} *,
+    #WS3-{{ section.id }} *::before,
+    #WS3-{{ section.id }} *::after {
+      animation-duration: 0.001s !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.001s !important;
+    }
+    #WS3-{{ section.id }} .ws-cap-fill {
+      animation: none !important;
+      filter: none !important;
+    }
+    #WS3-{{ section.id }} .ws-pill-dot,
+    #WS3-{{ section.id }} .ws-eyebrow-dot {
+      animation: none !important;
+    }
+  }
+  #WS3-{{ section.id }} .ws-cap-eta {
+    margin: 8px 0 0;
+    font-size: 0.78rem;
+    color: {{ section.settings.muted_text_color }};
+  }
+  #WS3-{{ section.id }} .ws-card-dtf {
+    grid-column: span 2;
+  }
+  @media screen and (max-width: 749px) {
+    #WS3-{{ section.id }} .ws-card-dtf { grid-column: span 1; }
+  }
+
   #WS3-{{ section.id }} .ws-footer {
     text-align: center;
     margin-top: 12px;
@@ -447,13 +699,13 @@
         <div class="ws-time">
           {{ icon_clock }}
           {% if overall_updated != blank %}
-            <span>Updated {{ overall_updated | date: section.settings.date_format }}</span>
+            <span>Updated <span class="ws-rel" data-iso="{{ overall_updated }}">{{ overall_updated | date: section.settings.date_format }}</span></span>
           {% else %}
             <span>Status is live</span>
           {% endif %}
         </div>
       </div>
-      <span class="ws-pill ws-pill-lg ws-s-{{ ocl }}">
+      <span class="ws-pill ws-pill-lg ws-pill-hero ws-s-{{ ocl }}">
         <span class="ws-pill-dot"></span>
         {{ overall_label }}
       </span>
@@ -476,19 +728,50 @@
           assign dtf_label = 'Full Capacity'
         endif
       %}
-      <div class="ws-card">
+      <div class="ws-card ws-card-dtf">
         <div class="ws-card-head">
           <h3 class="ws-card-title">DTF production</h3>
           <div class="ws-card-icon ws-icon-{{ dcl }}">{{ icon_printer }}</div>
         </div>
         <p class="ws-card-desc">Direct-to-film transfer production queue.</p>
+
+        {% if dtf_cap_total > 0 %}
+          <div class="ws-cap">
+            <div class="ws-cap-head">
+              <span class="ws-cap-label">Daily capacity</span>
+              <span class="ws-cap-figs">{{ dtf_cap_used }}m / {{ dtf_cap_total }}m · {{ dtf_cap_pct | floor }}% full</span>
+            </div>
+            <div class="ws-cap-bar"><div class="ws-cap-fill ws-cap-{{ dtf_cap_color }}" style="width:{{ dtf_cap_pct_clamped }}%"></div></div>
+            {% if dtf_dispatch_msg != blank %}
+              <p class="ws-cap-eta">{{ dtf_dispatch_msg }}</p>
+            {% endif %}
+          </div>
+        {% endif %}
+
         <div class="ws-card-foot">
-          <span class="ws-pill ws-s-{{ dcl }}">
+          <span class="ws-pill ws-pill-hero ws-s-{{ dcl }}">
             <span class="ws-pill-dot"></span>
             {{ dtf_label }}
           </span>
-          <span class="ws-foot-time">{% if dtf_updated != blank %}{{ dtf_updated | date: section.settings.date_format }}{% else %}—{% endif %}</span>
+          <span class="ws-foot-time ws-rel" data-iso="{{ dtf_updated }}">{% if dtf_updated != blank %}{{ dtf_updated | date: section.settings.date_format }}{% else %}—{% endif %}</span>
         </div>
+        {% liquid
+          assign cta_key_dept = dtf_status | downcase | replace: ' ', '_' | replace: '-', '_'
+          assign show_dept_cta = false
+          if section.settings.dtf_cta_label != blank and section.settings.dtf_cta_link != blank
+            if cta_key_dept != 'full_capacity'
+              assign show_dept_cta = true
+            endif
+          endif
+        %}
+        {% if show_dept_cta %}
+          <div class="ws-card-cta">
+            <a class="ws-card-cta-btn" href="{{ section.settings.dtf_cta_link }}">
+              {{ section.settings.dtf_cta_label | escape }}
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M13.5 4.5 21 12m0 0-7.5 7.5M21 12H3"/></svg>
+            </a>
+          </div>
+        {% endif %}
       </div>
 
       {% liquid
@@ -513,12 +796,29 @@
         </div>
         <p class="ws-card-desc">UV-DTF transfer print production queue.</p>
         <div class="ws-card-foot">
-          <span class="ws-pill ws-s-{{ ucl }}">
+          <span class="ws-pill ws-pill-hero ws-s-{{ ucl }}">
             <span class="ws-pill-dot"></span>
             {{ uv_dtf_label }}
           </span>
-          <span class="ws-foot-time">{% if uv_dtf_updated != blank %}{{ uv_dtf_updated | date: section.settings.date_format }}{% else %}—{% endif %}</span>
+          <span class="ws-foot-time ws-rel" data-iso="{{ uv_dtf_updated }}">{% if uv_dtf_updated != blank %}{{ uv_dtf_updated | date: section.settings.date_format }}{% else %}—{% endif %}</span>
         </div>
+        {% liquid
+          assign cta_key_dept = uv_dtf_status | downcase | replace: ' ', '_' | replace: '-', '_'
+          assign show_dept_cta = false
+          if section.settings.uv_dtf_cta_label != blank and section.settings.uv_dtf_cta_link != blank
+            if cta_key_dept != 'full_capacity'
+              assign show_dept_cta = true
+            endif
+          endif
+        %}
+        {% if show_dept_cta %}
+          <div class="ws-card-cta">
+            <a class="ws-card-cta-btn" href="{{ section.settings.uv_dtf_cta_link }}">
+              {{ section.settings.uv_dtf_cta_label | escape }}
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M13.5 4.5 21 12m0 0-7.5 7.5M21 12H3"/></svg>
+            </a>
+          </div>
+        {% endif %}
       </div>
 
       {% liquid
@@ -543,12 +843,29 @@
         </div>
         <p class="ws-card-desc">Vinyl sticker printing and finishing queue.</p>
         <div class="ws-card-foot">
-          <span class="ws-pill ws-s-{{ vcl }}">
+          <span class="ws-pill ws-pill-hero ws-s-{{ vcl }}">
             <span class="ws-pill-dot"></span>
             {{ vinyl_label }}
           </span>
-          <span class="ws-foot-time">{% if vinyl_updated != blank %}{{ vinyl_updated | date: section.settings.date_format }}{% else %}—{% endif %}</span>
+          <span class="ws-foot-time ws-rel" data-iso="{{ vinyl_updated }}">{% if vinyl_updated != blank %}{{ vinyl_updated | date: section.settings.date_format }}{% else %}—{% endif %}</span>
         </div>
+        {% liquid
+          assign cta_key_dept = vinyl_status | downcase | replace: ' ', '_' | replace: '-', '_'
+          assign show_dept_cta = false
+          if section.settings.vinyl_cta_label != blank and section.settings.vinyl_cta_link != blank
+            if cta_key_dept != 'full_capacity'
+              assign show_dept_cta = true
+            endif
+          endif
+        %}
+        {% if show_dept_cta %}
+          <div class="ws-card-cta">
+            <a class="ws-card-cta-btn" href="{{ section.settings.vinyl_cta_link }}">
+              {{ section.settings.vinyl_cta_label | escape }}
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M13.5 4.5 21 12m0 0-7.5 7.5M21 12H3"/></svg>
+            </a>
+          </div>
+        {% endif %}
       </div>
 
       {% liquid
@@ -573,12 +890,29 @@
         </div>
         <p class="ws-card-desc">Sublimation production work queue.</p>
         <div class="ws-card-foot">
-          <span class="ws-pill ws-s-{{ scl }}">
+          <span class="ws-pill ws-pill-hero ws-s-{{ scl }}">
             <span class="ws-pill-dot"></span>
             {{ sublimation_label }}
           </span>
-          <span class="ws-foot-time">{% if sublimation_updated != blank %}{{ sublimation_updated | date: section.settings.date_format }}{% else %}—{% endif %}</span>
+          <span class="ws-foot-time ws-rel" data-iso="{{ sublimation_updated }}">{% if sublimation_updated != blank %}{{ sublimation_updated | date: section.settings.date_format }}{% else %}—{% endif %}</span>
         </div>
+        {% liquid
+          assign cta_key_dept = sublimation_status | downcase | replace: ' ', '_' | replace: '-', '_'
+          assign show_dept_cta = false
+          if section.settings.sublimation_cta_label != blank and section.settings.sublimation_cta_link != blank
+            if cta_key_dept != 'full_capacity'
+              assign show_dept_cta = true
+            endif
+          endif
+        %}
+        {% if show_dept_cta %}
+          <div class="ws-card-cta">
+            <a class="ws-card-cta-btn" href="{{ section.settings.sublimation_cta_link }}">
+              {{ section.settings.sublimation_cta_label | escape }}
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M13.5 4.5 21 12m0 0-7.5 7.5M21 12H3"/></svg>
+            </a>
+          </div>
+        {% endif %}
       </div>
 
       {% liquid
@@ -603,15 +937,53 @@
         </div>
         <p class="ws-card-desc">Artwork checks, file prep and setup queue.</p>
         <div class="ws-card-foot">
-          <span class="ws-pill ws-s-{{ acl }}">
+          <span class="ws-pill ws-pill-hero ws-s-{{ acl }}">
             <span class="ws-pill-dot"></span>
             {{ artwork_label }}
           </span>
-          <span class="ws-foot-time">{% if artwork_updated != blank %}{{ artwork_updated | date: section.settings.date_format }}{% else %}—{% endif %}</span>
+          <span class="ws-foot-time ws-rel" data-iso="{{ artwork_updated }}">{% if artwork_updated != blank %}{{ artwork_updated | date: section.settings.date_format }}{% else %}—{% endif %}</span>
         </div>
+        {% liquid
+          assign cta_key_dept = artwork_status | downcase | replace: ' ', '_' | replace: '-', '_'
+          assign show_dept_cta = false
+          if section.settings.artwork_cta_label != blank and section.settings.artwork_cta_link != blank
+            if cta_key_dept != 'full_capacity'
+              assign show_dept_cta = true
+            endif
+          endif
+        %}
+        {% if show_dept_cta %}
+          <div class="ws-card-cta">
+            <a class="ws-card-cta-btn" href="{{ section.settings.artwork_cta_link }}">
+              {{ section.settings.artwork_cta_label | escape }}
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M13.5 4.5 21 12m0 0-7.5 7.5M21 12H3"/></svg>
+            </a>
+          </div>
+        {% endif %}
       </div>
 
     </div>
+
+    {% liquid
+      assign overall_key = overall_status | downcase | replace: ' ', '_' | replace: '-', '_'
+      assign show_cta = false
+      if section.settings.cta_label != blank and section.settings.cta_link != blank
+        if overall_key != 'full_capacity'
+          assign show_cta = true
+        endif
+      endif
+    %}
+    {% if show_cta %}
+      <div class="ws-cta-wrap">
+        <a class="ws-cta-btn" href="{{ section.settings.cta_link }}">
+          {{ section.settings.cta_label | escape }}
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M13.5 4.5 21 12m0 0-7.5 7.5M21 12H3" /></svg>
+        </a>
+        {% if section.settings.cta_note != blank %}
+          <p class="ws-cta-note">{{ section.settings.cta_note | escape }}</p>
+        {% endif %}
+      </div>
+    {% endif %}
 
     {% if section.settings.footer_note != blank %}
       <div class="ws-footer">
@@ -622,6 +994,38 @@
   </div>
 </section>
 
+<script>
+(function() {
+  var section = document.getElementById('WS3-{{ section.id }}');
+  if (!section) return;
+
+  function rel(iso) {
+    if (!iso) return '';
+    var d = new Date(iso);
+    if (isNaN(d)) return '';
+    var diff = Math.floor((Date.now() - d.getTime()) / 1000);
+    if (diff < 5) return 'just now';
+    if (diff < 60) return diff + 's ago';
+    if (diff < 3600) return Math.floor(diff / 60) + 'm ago';
+    if (diff < 86400) return Math.floor(diff / 3600) + 'h ago';
+    if (diff < 604800) return Math.floor(diff / 86400) + 'd ago';
+    return d.toLocaleDateString('en-GB', { day: '2-digit', month: 'short' });
+  }
+  function refreshRel() {
+    section.querySelectorAll('.ws-rel[data-iso]').forEach(function(el) {
+      var iso = el.getAttribute('data-iso');
+      if (!iso) return;
+      var t = rel(iso);
+      if (t) el.textContent = t;
+    });
+  }
+
+  refreshRel();
+  setInterval(refreshRel, 60 * 1000);
+})();
+</script>
+
+
 {% schema %}
 {
   "name": "Workshop status page",
@@ -629,16 +1033,32 @@
   "settings": [
     { "type": "text",     "id": "eyebrow",             "label": "Badge text",        "default": "Live Status" },
     { "type": "text",     "id": "heading",             "label": "Heading",           "default": "Workshop Status" },
-    { "type": "textarea","id": "subheading",           "label": "Intro text",        "default": "Check our current workshop capacity before placing an order. Statuses update in real time as production queues change." },
-    { "type": "textarea","id": "overall_description",  "label": "Overall description","default": "A live summary of our current production workload across all departments." },
-    { "type": "textarea","id": "footer_note",          "label": "Footer note",       "default": "Status is a guide only. For urgent orders, please contact us to confirm current lead times." },
+    { "type": "textarea", "id": "subheading",          "label": "Intro text",        "default": "Check our current workshop capacity before placing an order. Statuses update in real time as production queues change." },
+    { "type": "textarea", "id": "overall_description", "label": "Overall description","default": "A live summary of our current production workload across all departments." },
+    { "type": "textarea", "id": "footer_note",         "label": "Footer note",       "default": "Status is a guide only. For urgent orders, please contact us to confirm current lead times." },
     { "type": "text",     "id": "date_format",         "label": "Date format",       "default": "%d %b %Y, %H:%M" },
-    { "type": "color",   "id": "background_color",     "label": "Background colour", "default": "#f8f9fa" },
-    { "type": "color",   "id": "card_background_color","label": "Card background",   "default": "#ffffff" },
-    { "type": "color",   "id": "text_color",           "label": "Text colour",       "default": "#111827" },
-    { "type": "color",   "id": "muted_text_color",     "label": "Secondary text",    "default": "#6b7280" },
-    { "type": "range",   "id": "padding_top",    "min": 24, "max": 120, "step": 4, "unit": "px", "label": "Top padding",    "default": 56 },
-    { "type": "range",   "id": "padding_bottom", "min": 24, "max": 120, "step": 4, "unit": "px", "label": "Bottom padding", "default": 56 }
+    { "type": "header",   "content": "Per-department CTAs" },
+    { "type": "paragraph","content": "Each card has its own CTA linking to the relevant product or collection. Hidden when that department is at Full Capacity, or when the link is blank." },
+    { "type": "text",     "id": "dtf_cta_label",         "label": "DTF — Button label",            "default": "Shop DTF transfers" },
+    { "type": "url",      "id": "dtf_cta_link",          "label": "DTF — Button link" },
+    { "type": "text",     "id": "uv_dtf_cta_label",      "label": "UV-DTF — Button label",         "default": "Shop UV-DTF" },
+    { "type": "url",      "id": "uv_dtf_cta_link",       "label": "UV-DTF — Button link" },
+    { "type": "text",     "id": "vinyl_cta_label",       "label": "Vinyl stickers — Button label", "default": "Shop vinyl stickers" },
+    { "type": "url",      "id": "vinyl_cta_link",        "label": "Vinyl stickers — Button link" },
+    { "type": "text",     "id": "sublimation_cta_label", "label": "Sublimation — Button label",    "default": "Shop sublimation" },
+    { "type": "url",      "id": "sublimation_cta_link",  "label": "Sublimation — Button link" },
+    { "type": "text",     "id": "artwork_cta_label",     "label": "Artwork setup — Button label",  "default": "Submit artwork" },
+    { "type": "url",      "id": "artwork_cta_link",      "label": "Artwork setup — Button link" },
+    { "type": "header",   "content": "Page-level CTA (below all cards)" },
+    { "type": "text",     "id": "cta_label",           "label": "Button label",      "default": "Place an order" },
+    { "type": "url",      "id": "cta_link",            "label": "Button link" },
+    { "type": "text",     "id": "cta_note",            "label": "Note under button", "default": "Hidden when overall status is Full Capacity." },
+    { "type": "color",    "id": "background_color",    "label": "Background colour", "default": "#f8f9fa" },
+    { "type": "color",    "id": "card_background_color","label":"Card background",   "default": "#ffffff" },
+    { "type": "color",    "id": "text_color",          "label": "Text colour",       "default": "#111827" },
+    { "type": "color",    "id": "muted_text_color",    "label": "Secondary text",    "default": "#6b7280" },
+    { "type": "range",    "id": "padding_top",    "min": 24, "max": 120, "step": 4, "unit": "px", "label": "Top padding",    "default": 56 },
+    { "type": "range",    "id": "padding_bottom", "min": 24, "max": 120, "step": 4, "unit": "px", "label": "Bottom padding", "default": 56 }
   ],
   "presets": [
     { "name": "Workshop status page" }

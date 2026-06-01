@@ -51,6 +51,13 @@
   assign vinyl_status       = vinyl_status       | default: 'Not Busy'
   assign sublimation_status = sublimation_status | default: 'Not Busy'
   assign artwork_status     = artwork_status     | default: 'Not Busy'
+
+  assign dtf_cap_total = shop.metafields.dtfcapacity.total.value | default: shop.metafields.dtfcapacity.total | default: 0 | plus: 0
+  assign dtf_cap_used  = shop.metafields.dtfcapacity.used.value  | default: shop.metafields.dtfcapacity.used  | default: 0 | plus: 0
+  assign dtf_cap_pct = 0
+  if dtf_cap_total > 0
+    assign dtf_cap_pct = dtf_cap_used | times: 100 | divided_by: dtf_cap_total
+  endif
 %}
 
 <style>
@@ -165,6 +172,14 @@
 
   #WSW2-{{ section.id }} .ww-chip-val {
     font-weight: 700;
+  }
+
+  #WSW2-{{ section.id }} .ww-chip-cap {
+    font-size: 0.78rem;
+    font-weight: 500;
+    color: var(--ww-muted);
+    margin-left: 2px;
+    font-variant-numeric: tabular-nums;
   }
 
   #WSW2-{{ section.id }} .ww-d-green { background-color: var(--ww-green); }
@@ -285,6 +300,9 @@
           <span class="ww-chip-label">DTF</span>
           <span class="ww-chip-dot ww-d-{{ dcl }}"></span>
           <span class="ww-chip-val ww-t-{{ dcl }}">{{ dtf_label }}</span>
+          {% if dtf_cap_total > 0 %}
+            <span class="ww-chip-cap">· {{ dtf_cap_pct | floor }}% full</span>
+          {% endif %}
         </span>
 
         {% liquid
