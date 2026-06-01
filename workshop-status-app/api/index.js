@@ -21,28 +21,33 @@ const API_VERSION = '2025-01';
 const GRAPHQL_URL = `https://${SHOPIFY_SHOP_DOMAIN}/admin/api/${API_VERSION}/graphql.json`;
 const OAUTH_SCOPES = 'read_content,write_content,read_metaobjects,write_metaobjects,read_orders,write_orders';
 
-// DTF SKU → cm consumed on the daily capacity (per single unit ordered).
-// Multiplied by line-item quantity at runtime, rounded to int.
-const DTF_CM = {
-  // Gang sheets (length in cm)
+// DTF roll is 56 cm wide. Individual transfer SKUs get tiled onto it; the
+// roll length consumed per unit is (length / units-per-row).
+// Each entry: width is the side placed across the 56 cm roll, length is the
+// side along the roll's length. Orientation chosen to minimise per-unit cost.
+const ROLL_WIDTH_CM = 56;
+
+const DTF_TILED = {
+  '5x5-DTF':       { width: 5,    length: 5   },
+  '7x7-DTF':       { width: 7,    length: 7   },
+  '10x10-DTF':     { width: 10,   length: 10  },
+  '12.5x12.5-DTF': { width: 12.5, length: 12.5 },
+  '15x15-DTF':     { width: 15,   length: 15  },
+  '17x17-DTF':     { width: 17,   length: 17  },
+  '25x25-DTF':     { width: 25,   length: 25  },
+  '25x55-DTF':     { width: 55,   length: 25  },  // 55 fits in 56, 25 along length
+  '28x28-DTF':     { width: 28,   length: 28  },
+  'A4-DTF':        { width: 21,   length: 30  },  // 2 fit across (21+21<56), 30 long
+  'A3-DTF':        { width: 42,   length: 30  },  // 1 fits across, 30 long (rotated)
+};
+
+// Gang sheet SKUs are full-width: each unit consumes its full length of roll.
+const DTF_GANG_CM = {
   'DTF_GANG_100': 100,
   'DTF_GANG_125': 125,
   'DTF_GANG_150': 150,
   'DTF_GANG_175': 175,
   'DTF_GANG_200': 200,
-  // Individual transfers (longer side in cm)
-  '5x5-DTF': 5,
-  '7x7-DTF': 7,
-  '10x10-DTF': 10,
-  '12.5x12.5-DTF': 12.5,
-  '15x15-DTF': 15,
-  '17x17-DTF': 17,
-  '25x25-DTF': 25,
-  '25x55-DTF': 55,
-  '28x28-DTF': 28,
-  // A-sized sheets (longer side in cm)
-  'A4-DTF': 30,
-  'A3-DTF': 42,
 };
 
 const HTML_TEMPLATE = fs.readFileSync(
@@ -357,20 +362,20 @@ app.post('/api/capacity', requireAuth, async (req, res) => {
         ownerId: shopGid,
         namespace: 'dtfcapacity',
         key: 'total',
-        type: 'number_integer',
-        value: String(Math.round(total)),
+        type: 'number_decimal',
+        value: String(Number(total.toFixed(2))),
       });
     }
     if (Number.isFinite(used)) {
       if (used < 0 || used > 100000) {
         return res.status(400).json({ error: 'Invalid used (must be 0–100000)' });
       }
-      const safeUsed = Math.max(0, Math.round(used));
+      const safeUsed = Math.max(0, Number(used.toFixed(2)));
       metafields.push({
         ownerId: shopGid,
         namespace: 'dtfcapacity',
         key: 'used',
-        type: 'number_integer',
+        type: 'number_decimal',
         value: String(safeUsed),
       });
       // Auto-update DTF status pill to match the new queue
@@ -460,20 +465,39 @@ function verifyShopifyHmac(req) {
   }
 }
 
-function lineItemsToCm(lineItems = []) {
-  let total = 0;
+// Per-unit roll length (cm) for a tiled SKU on the 56 cm roll.
+// Fair share = length / (units that fit across the roll width).
+function tiledCmPerUnit(sku) {
+  const dims = DTF_TILED[sku];
+  if (!dims) return 0;
+  const perRow = Math.max(1, Math.floor(ROLL_WIDTH_CM / dims.width));
+  return dims.length / perRow;
+}
+
+// Returns the total metres of DTF roll consumed by these line items.
+// - Gang sheets (DTF_GANG_*): full length per unit.
+// - Tiled SKUs (DTF_TILED): fair-share length per unit on the 56 cm roll.
+// IMPORTANT: dtfcapacity.total and dtfcapacity.used metafields are in METRES,
+// so this must return metres for the webhook adds/subtracts to be correct.
+function lineItemsToMeters(lineItems = []) {
+  let totalCm = 0;
   for (const item of lineItems) {
     const sku = item.sku;
     const qty = Number(item.quantity) || 0;
-    const cmPerUnit = DTF_CM[sku];
-    if (cmPerUnit && qty > 0) {
-      total += Math.round(cmPerUnit * qty);
+    if (qty <= 0) continue;
+    if (DTF_GANG_CM[sku]) {
+      totalCm += DTF_GANG_CM[sku] * qty;
+    } else if (DTF_TILED[sku]) {
+      totalCm += tiledCmPerUnit(sku) * qty;
     }
   }
-  return total;
+  return Math.round(totalCm) / 100;
 }
 
-async function getOrderQueuedCm(orderGid) {
+// NOTE: the metafield is named `dtf_queued_cm` for back-compat with the
+// existing Order metafield definition (custom.dtf_queued_cm), but the value
+// is actually stored in METRES to match the dtfcapacity.used unit.
+async function getOrderQueuedMeters(orderGid) {
   const data = await shopifyGraphQL(`
     query OrderQueued($id: ID!) {
       order(id: $id) {
@@ -485,7 +509,7 @@ async function getOrderQueuedCm(orderGid) {
   return v ? Number(v) : 0;
 }
 
-async function setOrderQueuedCm(orderGid, cm) {
+async function setOrderQueuedMeters(orderGid, meters) {
   const mutation = `
     mutation SetOrderQueued($metafields: [MetafieldsSetInput!]!) {
       metafieldsSet(metafields: $metafields) {
@@ -498,8 +522,8 @@ async function setOrderQueuedCm(orderGid, cm) {
       ownerId: orderGid,
       namespace: 'custom',
       key: 'dtf_queued_cm',
-      type: 'number_integer',
-      value: String(Math.round(cm)),
+      type: 'number_decimal',
+      value: String(Number(meters.toFixed(2))),
     }],
   };
   const data = await shopifyGraphQL(mutation, variables);
@@ -534,7 +558,7 @@ function queueToStatus(cm) {
 
 async function writeCapacityUsed(newUsed) {
   const shopGid = await getShopGid();
-  const safeUsed = Math.max(0, Math.round(newUsed));
+  const safeUsed = Math.max(0, Number(Number(newUsed).toFixed(2)));
   const status = queueToStatus(safeUsed);
   const mutation = `
     mutation SetUsed($metafields: [MetafieldsSetInput!]!) {
@@ -549,7 +573,7 @@ async function writeCapacityUsed(newUsed) {
         ownerId: shopGid,
         namespace: 'dtfcapacity',
         key: 'used',
-        type: 'number_integer',
+        type: 'number_decimal',
         value: String(safeUsed),
       },
       {
@@ -587,30 +611,29 @@ app.post('/api/webhooks/orders', async (req, res) => {
   const orderGid = `gid://shopify/Order/${orderId}`;
   try {
     if (topic === 'orders/paid') {
-      const cm = lineItemsToCm(order.line_items);
-      if (cm <= 0) return res.status(200).send('no dtf');
+      const meters = lineItemsToMeters(order.line_items);
+      if (meters <= 0) return res.status(200).send('no dtf');
 
-      const alreadyQueued = await getOrderQueuedCm(orderGid);
+      const alreadyQueued = await getOrderQueuedMeters(orderGid);
       if (alreadyQueued > 0) {
-        console.log(`Order ${orderId} already queued at ${alreadyQueued}cm — skipping`);
+        console.log(`Order ${orderId} already queued at ${alreadyQueued}m — skipping`);
         return res.status(200).send('already queued');
       }
 
       const current = await readCapacityUsed();
-      await writeCapacityUsed(current + cm);
-      await setOrderQueuedCm(orderGid, cm);
-      console.log(`Order ${orderId} paid → +${cm}cm (queue ${current}→${current + cm})`);
-
+      await writeCapacityUsed(current + meters);
+      await setOrderQueuedMeters(orderGid, meters);
+      console.log(`Order ${orderId} paid → +${meters}m (queue ${current}→${current + meters})`);
     } else if (topic === 'orders/fulfilled' || topic === 'orders/cancelled') {
-      const queuedCm = await getOrderQueuedCm(orderGid);
-      if (queuedCm <= 0) {
-        console.log(`Order ${orderId} ${topic} but no queued cm — skipping`);
+      const queuedMeters = await getOrderQueuedMeters(orderGid);
+      if (queuedMeters <= 0) {
+        console.log(`Order ${orderId} ${topic} but no queued meters — skipping`);
         return res.status(200).send('not queued');
       }
       const current = await readCapacityUsed();
-      await writeCapacityUsed(Math.max(0, current - queuedCm));
-      await setOrderQueuedCm(orderGid, 0);
-      console.log(`Order ${orderId} ${topic} → -${queuedCm}cm (queue ${current}→${Math.max(0, current - queuedCm)})`);
+      await writeCapacityUsed(Math.max(0, current - queuedMeters));
+      await setOrderQueuedMeters(orderGid, 0);
+      console.log(`Order ${orderId} ${topic} → -${queuedMeters}m (queue ${current}→${Math.max(0, current - queuedMeters)})`);
 
     } else {
       console.log(`Webhook topic ${topic} not handled`);
