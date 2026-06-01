@@ -365,12 +365,21 @@ app.post('/api/capacity', requireAuth, async (req, res) => {
       if (used < 0 || used > 100000) {
         return res.status(400).json({ error: 'Invalid used (must be 0–100000)' });
       }
+      const safeUsed = Math.max(0, Math.round(used));
       metafields.push({
         ownerId: shopGid,
         namespace: 'dtfcapacity',
         key: 'used',
         type: 'number_integer',
-        value: String(Math.round(used)),
+        value: String(safeUsed),
+      });
+      // Auto-update DTF status pill to match the new queue
+      metafields.push({
+        ownerId: shopGid,
+        namespace: 'workshop_status',
+        key: 'dtf',
+        type: 'single_line_text_field',
+        value: queueToStatus(safeUsed),
       });
     }
     if (metafields.length === 0) {
@@ -510,8 +519,23 @@ async function readCapacityUsed() {
   return v ? Number(v) : 0;
 }
 
+// Map queue meterage (cm) to a DTF status key.
+// Thresholds:
+//   < 100 cm        → not_busy
+//   100 – 199 cm    → moderate
+//   200 – 299 cm    → busy
+//   300 cm or more  → full_capacity
+function queueToStatus(cm) {
+  if (cm >= 300) return 'full_capacity';
+  if (cm >= 200) return 'busy';
+  if (cm >= 100) return 'moderate';
+  return 'not_busy';
+}
+
 async function writeCapacityUsed(newUsed) {
   const shopGid = await getShopGid();
+  const safeUsed = Math.max(0, Math.round(newUsed));
+  const status = queueToStatus(safeUsed);
   const mutation = `
     mutation SetUsed($metafields: [MetafieldsSetInput!]!) {
       metafieldsSet(metafields: $metafields) {
@@ -526,7 +550,14 @@ async function writeCapacityUsed(newUsed) {
         namespace: 'dtfcapacity',
         key: 'used',
         type: 'number_integer',
-        value: String(Math.max(0, Math.round(newUsed))),
+        value: String(safeUsed),
+      },
+      {
+        ownerId: shopGid,
+        namespace: 'workshop_status',
+        key: 'dtf',
+        type: 'single_line_text_field',
+        value: status,
       },
       {
         ownerId: shopGid,
