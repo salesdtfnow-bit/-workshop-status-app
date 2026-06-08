@@ -559,8 +559,8 @@ async function recalculateMachineQueues() {
 
 // ─── Helper: stamp custom.setup_at when machine assigned but setup_at empty ─
 // ─── Helper: post a comment to the order's Timeline ───────────────────────
-// Uses Shopify Admin GraphQL's commentEventCreate mutation, which appears
-// as a "comment" event in the order's timeline panel.
+// Tries Shopify Admin GraphQL's commentEventCreate mutation. If that's
+// not available, falls back to appending to the order's Notes field.
 async function postTimelineComment(orderGid, body) {
   const result = await shopifyGraphQL(`
     mutation PostComment($subjectId: ID!, $body: String!) {
@@ -570,8 +570,39 @@ async function postTimelineComment(orderGid, body) {
       }
     }
   `, { subjectId: orderGid, body });
+
+  // Surface top-level GraphQL errors (e.g. mutation doesn't exist on this API version)
+  if (result.errors?.length) {
+    console.error('commentEventCreate GraphQL errors:', JSON.stringify(result.errors));
+    // Fall back to Notes append so the comment isn't lost
+    return appendOrderNoteFallback(orderGid, body);
+  }
   const errs = result.data?.commentEventCreate?.userErrors || [];
-  if (errs.length) throw new Error('commentEventCreate errors: ' + JSON.stringify(errs));
+  if (errs.length) {
+    console.error('commentEventCreate userErrors:', JSON.stringify(errs));
+    return appendOrderNoteFallback(orderGid, body);
+  }
+  console.log('Timeline comment posted on', orderGid);
+}
+
+// Fallback: append to Order.note field if commentEventCreate isn't available.
+async function appendOrderNoteFallback(orderGid, line) {
+  const data = await shopifyGraphQL(`
+    query GetNote($id: ID!) { order(id: $id) { note } }
+  `, { id: orderGid });
+  const current = (data.data?.order?.note || '').trim();
+  const newNote = current ? current + '\n' + line : line;
+  const result = await shopifyGraphQL(`
+    mutation UpdateNote($input: OrderInput!) {
+      orderUpdate(input: $input) {
+        order { id }
+        userErrors { field message }
+      }
+    }
+  `, { input: { id: orderGid, note: newNote } });
+  const errs = result.data?.orderUpdate?.userErrors || [];
+  if (errs.length) console.error('appendOrderNoteFallback errors:', JSON.stringify(errs));
+  else console.log('Note fallback used on', orderGid);
 }
 
 async function maybeStampSetupAt(orderGid) {
@@ -823,7 +854,6 @@ app.post('/api/webhooks/orders', async (req, res) => {
       await writeCapacityUsed(current + meters);
       await setOrderQueuedMeters(orderGid, meters);
       await recalculateMachineQueues();
-      console.log(`Order ${orderId} paid → +${meters}m (queue ${current}→${current + meters})`);
     } else if (topic === 'orders/fulfilled' || topic === 'orders/cancelled') {
       const queuedMeters = await getOrderQueuedMeters(orderGid);
       if (queuedMeters <= 0) {
