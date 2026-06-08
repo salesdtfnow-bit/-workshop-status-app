@@ -611,37 +611,54 @@ async function maybeStampSetupAt(orderGid) {
       order(id: $id) {
         machine: metafield(namespace: "custom", key: "machine") { value }
         setupAt: metafield(namespace: "custom", key: "setup_at") { value }
+        lastCommented: metafield(namespace: "custom", key: "last_commented_machine") { value }
       }
     }
   `, { id: orderGid });
   const machine = (data.data?.order?.machine?.value || '').toUpperCase();
   const setupAt = data.data?.order?.setupAt?.value;
-  if ((machine === 'A' || machine === 'B') && !setupAt) {
+  const lastCommented = (data.data?.order?.lastCommented?.value || '').toUpperCase();
+  console.log(`maybeStampSetupAt ${orderGid} machine=${machine || '(none)'} setupAt=${setupAt ? 'set' : 'empty'} lastCommented=${lastCommented || '(none)'}`);
+
+  // Post a comment whenever machine assignment changes (or is set the first time).
+  if ((machine === 'A' || machine === 'B') && machine !== lastCommented) {
     const nowIso = new Date().toISOString();
-    const mutation = `
-      mutation Stamp($metafields: [MetafieldsSetInput!]!) {
-        metafieldsSet(metafields: $metafields) {
-          userErrors { field message }
-        }
-      }
-    `;
-    await shopifyGraphQL(mutation, {
-      metafields: [{
+    const metafields = [];
+    // Stamp setup_at only the first time
+    if (!setupAt) {
+      metafields.push({
         ownerId: orderGid,
         namespace: 'custom',
         key: 'setup_at',
         type: 'date_time',
         value: nowIso,
-      }],
+      });
+    }
+    // Record which machine we've commented about so we don't double-post
+    metafields.push({
+      ownerId: orderGid,
+      namespace: 'custom',
+      key: 'last_commented_machine',
+      type: 'single_line_text_field',
+      value: machine,
     });
-    // Post a comment to the order's Timeline (admin only).
+    await shopifyGraphQL(`
+      mutation Stamp($metafields: [MetafieldsSetInput!]!) {
+        metafieldsSet(metafields: $metafields) {
+          userErrors { field message }
+        }
+      }
+    `, { metafields });
+
+    // Post timeline comment
     const stamp = new Date().toLocaleString('en-GB', {
       timeZone: 'Europe/London',
       day: '2-digit', month: 'short', year: 'numeric',
       hour: '2-digit', minute: '2-digit',
     });
+    const verb = lastCommented ? 'Reassigned to' : 'Setup on';
     try {
-      await postTimelineComment(orderGid, `Setup on Machine ${machine} at ${stamp}`);
+      await postTimelineComment(orderGid, `${verb} Machine ${machine} at ${stamp}`);
     } catch (e) {
       console.error('postTimelineComment failed for', orderGid, e.message);
     }
@@ -866,28 +883,26 @@ app.post('/api/webhooks/orders', async (req, res) => {
       await setOrderQueuedMeters(orderGid, 0);
       await recalculateMachineQueues();
       console.log(`Order ${orderId} ${topic} → -${queuedMeters}m (queue ${current}→${Math.max(0, current - queuedMeters)})`);
-
     } else if (topic === 'orders/updated') {
-      await maybeStampSetupAt(orderGid);
+      // Re-sync machine queues + stamp setup_at / post timeline comment when machine
+      // assignment changes.
       await recalculateMachineQueues();
+      try {
+        await maybeStampSetupAt(orderGid);
+      } catch (e) {
+        console.error('maybeStampSetupAt failed for', orderGid, e.message);
+      }
       console.log(`Order ${orderId} updated → recalculated machine queues`);
-
     } else {
       console.log(`Webhook topic ${topic} not handled`);
     }
     res.status(200).send('ok');
   } catch (e) {
-    console.error('Webhook handler error:', e);
+    console.error('Webhook handler error:', e && (e.stack || e.message || e));
     res.status(200).send('handled with errors');
   }
 });
 
 app.get('/healthz', (_req, res) => res.send('ok'));
-
-if (!process.env.VERCEL) {
-  app.listen(PORT, () => {
-    console.log(`Workshop Status app on port ${PORT}`);
-  });
-}
 
 export default app;
