@@ -558,25 +558,20 @@ async function recalculateMachineQueues() {
 }
 
 // ─── Helper: stamp custom.setup_at when machine assigned but setup_at empty ─
-// ─── Helper: append a line to the order's note field ─────────────────────
-async function appendOrderNote(orderGid, line) {
-  const data = await shopifyGraphQL(`
-    query GetNote($id: ID!) {
-      order(id: $id) { note }
-    }
-  `, { id: orderGid });
-  const current = (data.data?.order?.note || '').trim();
-  const newNote = current ? current + '\n' + line : line;
+// ─── Helper: post a comment to the order's Timeline ───────────────────────
+// Uses Shopify Admin GraphQL's commentEventCreate mutation, which appears
+// as a "comment" event in the order's timeline panel.
+async function postTimelineComment(orderGid, body) {
   const result = await shopifyGraphQL(`
-    mutation UpdateNote($input: OrderInput!) {
-      orderUpdate(input: $input) {
-        order { id }
+    mutation PostComment($subjectId: ID!, $body: String!) {
+      commentEventCreate(input: { subjectId: $subjectId, body: $body }) {
+        commentEvent { id }
         userErrors { field message }
       }
     }
-  `, { input: { id: orderGid, note: newNote } });
-  const errs = result.data?.orderUpdate?.userErrors || [];
-  if (errs.length) throw new Error('orderUpdate errors: ' + JSON.stringify(errs));
+  `, { subjectId: orderGid, body });
+  const errs = result.data?.commentEventCreate?.userErrors || [];
+  if (errs.length) throw new Error('commentEventCreate errors: ' + JSON.stringify(errs));
 }
 
 async function maybeStampSetupAt(orderGid) {
@@ -608,16 +603,16 @@ async function maybeStampSetupAt(orderGid) {
         value: nowIso,
       }],
     });
-    // Auto-comment on the order so it shows in the admin's Notes box.
+    // Post a comment to the order's Timeline (admin only).
     const stamp = new Date().toLocaleString('en-GB', {
       timeZone: 'Europe/London',
       day: '2-digit', month: 'short', year: 'numeric',
       hour: '2-digit', minute: '2-digit',
     });
     try {
-      await appendOrderNote(orderGid, `[${stamp}] Setup on Machine ${machine}`);
+      await postTimelineComment(orderGid, `Setup on Machine ${machine} at ${stamp}`);
     } catch (e) {
-      console.error('appendOrderNote failed for', orderGid, e.message);
+      console.error('postTimelineComment failed for', orderGid, e.message);
     }
   }
 }
