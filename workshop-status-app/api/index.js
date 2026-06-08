@@ -136,7 +136,7 @@ app.get('/install', (req, res) => {
 async function registerOrderWebhooks(shop, accessToken, ourHost) {
   const url = `https://${shop}/admin/api/${API_VERSION}/graphql.json`;
   const callbackUrl = `https://${ourHost}/api/webhooks/orders`;
-  const topics = ['ORDERS_PAID', 'ORDERS_FULFILLED', 'ORDERS_CANCELLED'];
+  const topics = ['ORDERS_PAID', 'ORDERS_FULFILLED', 'ORDERS_CANCELLED', 'ORDERS_UPDATED'];
   const results = [];
 
   const call = async (query, variables) => {
@@ -293,6 +293,10 @@ app.get('/api/statuses', requireAuth, async (_req, res) => {
           artwork_setup_updated: metafield(namespace: "workshop_status", key: "artwork_setup_updated") { value }
           dtf_capacity_total: metafield(namespace: "dtfcapacity", key: "total") { value }
           dtf_capacity_used: metafield(namespace: "dtfcapacity", key: "used") { value }
+          machine_a_online: metafield(namespace: "dtfcapacity", key: "machine_a_online") { value }
+          machine_b_online: metafield(namespace: "dtfcapacity", key: "machine_b_online") { value }
+          machine_a_queue: metafield(namespace: "dtfcapacity", key: "machine_a_queue") { value }
+          machine_b_queue: metafield(namespace: "dtfcapacity", key: "machine_b_queue") { value }
         }
       }
     `;
@@ -417,6 +421,167 @@ app.post('/api/capacity', requireAuth, async (req, res) => {
     res.status(500).json({ error: e.message });
   }
 });
+
+// ─── API: toggle Machine A / B online state ───────────────────────────────
+app.post('/api/machine', requireAuth, async (req, res) => {
+  try {
+    const { machine, online } = req.body || {};
+    if (machine !== 'A' && machine !== 'B') {
+      return res.status(400).json({ error: 'machine must be "A" or "B"' });
+    }
+    if (typeof online !== 'boolean') {
+      return res.status(400).json({ error: 'online must be a boolean' });
+    }
+    const shopGid = await getShopGid();
+    const key = machine === 'A' ? 'machine_a_online' : 'machine_b_online';
+    const mutation = `
+      mutation SetOnline($metafields: [MetafieldsSetInput!]!) {
+        metafieldsSet(metafields: $metafields) {
+          userErrors { field message }
+        }
+      }
+    `;
+    const variables = {
+      metafields: [{
+        ownerId: shopGid,
+        namespace: 'dtfcapacity',
+        key,
+        type: 'boolean',
+        value: online ? 'true' : 'false',
+      }],
+    };
+    const data = await shopifyGraphQL(mutation, variables);
+    const errors = data.data?.metafieldsSet?.userErrors || [];
+    if (errors.length) return res.status(400).json({ error: 'Shopify rejected', details: errors });
+    res.json({ ok: true, machine, online });
+  } catch (e) {
+    console.error('POST /api/machine error:', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ─── API: customer-facing order tracker ───────────────────────────────────
+// GET /api/track?order=1234 → returns { found, name, machine, setupAt, fulfillmentStatus, displayFinancialStatus }
+// No auth — designed for the storefront tracker form. Only exposes setup info.
+app.get('/api/track', async (req, res) => {
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'GET');
+  try {
+    let raw = (req.query.order || '').toString().trim();
+    if (!raw) return res.status(400).json({ error: 'Provide ?order=N' });
+    // Normalise: strip leading '#' if present
+    const num = raw.replace(/^#/, '');
+    if (!/^\d+$/.test(num)) {
+      return res.status(400).json({ error: 'Order number must be digits only' });
+    }
+    const query = `
+      query LookupOrder($q: String!) {
+        orders(first: 1, query: $q) {
+          edges {
+            node {
+              id
+              name
+              displayFulfillmentStatus
+              displayFinancialStatus
+              machine: metafield(namespace: "custom", key: "machine") { value }
+              setupAt: metafield(namespace: "custom", key: "setup_at") { value }
+            }
+          }
+        }
+      }
+    `;
+    const data = await shopifyGraphQL(query, { q: `name:#${num}` });
+    const edge = data.data?.orders?.edges?.[0];
+    if (!edge) return res.json({ found: false });
+    const node = edge.node;
+    res.json({
+      found: true,
+      name: node.name,
+      machine: node.machine?.value || null,
+      setupAt: node.setupAt?.value || null,
+      fulfillmentStatus: node.displayFulfillmentStatus,
+      financialStatus: node.displayFinancialStatus,
+    });
+  } catch (e) {
+    console.error('GET /api/track error:', e);
+    res.status(500).json({ error: 'Lookup failed' });
+  }
+});
+
+// ─── Helper: recalculate machine_a/b queues from order metafields ─────────
+// Sums dtf_queued_cm (in metres) for unfulfilled orders grouped by custom.machine.
+async function recalculateMachineQueues() {
+  const query = `
+    {
+      orders(first: 250, query: "fulfillment_status:unfulfilled") {
+        edges {
+          node {
+            id
+            machine: metafield(namespace: "custom", key: "machine") { value }
+            queued: metafield(namespace: "custom", key: "custom_dtf_queued_cm") { value }
+          }
+        }
+      }
+    }
+  `;
+  const data = await shopifyGraphQL(query);
+  const edges = data.data?.orders?.edges || [];
+  const totals = { A: 0, B: 0 };
+  for (const e of edges) {
+    const m = (e.node.machine?.value || '').toUpperCase();
+    const meters = Number(e.node.queued?.value) || 0;
+    if (m === 'A') totals.A += meters;
+    else if (m === 'B') totals.B += meters;
+  }
+  const shopGid = await getShopGid();
+  const mutation = `
+    mutation SetMachineQueues($metafields: [MetafieldsSetInput!]!) {
+      metafieldsSet(metafields: $metafields) {
+        userErrors { field message }
+      }
+    }
+  `;
+  const variables = {
+    metafields: [
+      { ownerId: shopGid, namespace: 'dtfcapacity', key: 'machine_a_queue', type: 'number_decimal', value: String(Number(totals.A.toFixed(2))) },
+      { ownerId: shopGid, namespace: 'dtfcapacity', key: 'machine_b_queue', type: 'number_decimal', value: String(Number(totals.B.toFixed(2))) },
+    ],
+  };
+  await shopifyGraphQL(mutation, variables);
+  return totals;
+}
+
+// ─── Helper: stamp custom.setup_at when machine assigned but setup_at empty ─
+async function maybeStampSetupAt(orderGid) {
+  const data = await shopifyGraphQL(`
+    query Check($id: ID!) {
+      order(id: $id) {
+        machine: metafield(namespace: "custom", key: "machine") { value }
+        setupAt: metafield(namespace: "custom", key: "setup_at") { value }
+      }
+    }
+  `, { id: orderGid });
+  const machine = (data.data?.order?.machine?.value || '').toUpperCase();
+  const setupAt = data.data?.order?.setupAt?.value;
+  if ((machine === 'A' || machine === 'B') && !setupAt) {
+    const mutation = `
+      mutation Stamp($metafields: [MetafieldsSetInput!]!) {
+        metafieldsSet(metafields: $metafields) {
+          userErrors { field message }
+        }
+      }
+    `;
+    await shopifyGraphQL(mutation, {
+      metafields: [{
+        ownerId: orderGid,
+        namespace: 'custom',
+        key: 'setup_at',
+        type: 'date_time',
+        value: new Date().toISOString(),
+      }],
+    });
+  }
+}
 
 // ─── Debug endpoint ────────────────────────────────────────────────────────
 app.get('/api/debug', requireAuth, async (_req, res) => {
@@ -623,17 +788,26 @@ app.post('/api/webhooks/orders', async (req, res) => {
       const current = await readCapacityUsed();
       await writeCapacityUsed(current + meters);
       await setOrderQueuedMeters(orderGid, meters);
+      await recalculateMachineQueues();
       console.log(`Order ${orderId} paid → +${meters}m (queue ${current}→${current + meters})`);
     } else if (topic === 'orders/fulfilled' || topic === 'orders/cancelled') {
       const queuedMeters = await getOrderQueuedMeters(orderGid);
       if (queuedMeters <= 0) {
         console.log(`Order ${orderId} ${topic} but no queued meters — skipping`);
+        await recalculateMachineQueues();
         return res.status(200).send('not queued');
       }
       const current = await readCapacityUsed();
       await writeCapacityUsed(Math.max(0, current - queuedMeters));
       await setOrderQueuedMeters(orderGid, 0);
+      await recalculateMachineQueues();
       console.log(`Order ${orderId} ${topic} → -${queuedMeters}m (queue ${current}→${Math.max(0, current - queuedMeters)})`);
+
+    } else if (topic === 'orders/updated') {
+      // Triggered when admin sets/changes custom.machine on the order.
+      await maybeStampSetupAt(orderGid);
+      await recalculateMachineQueues();
+      console.log(`Order ${orderId} updated → recalculated machine queues`);
 
     } else {
       console.log(`Webhook topic ${topic} not handled`);
