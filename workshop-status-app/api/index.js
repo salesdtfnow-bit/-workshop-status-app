@@ -469,10 +469,11 @@ app.get('/api/track', async (req, res) => {
   try {
     let raw = (req.query.order || '').toString().trim();
     if (!raw) return res.status(400).json({ error: 'Provide ?order=N' });
-    // Normalise: strip leading '#' if present
-    const num = raw.replace(/^#/, '');
-    if (!/^\d+$/.test(num)) {
-      return res.status(400).json({ error: 'Order number must be digits only' });
+    // Normalise: strip leading '#' if present. Allow letters + digits
+    // (Shopify order prefixes like DTFN25398) plus dashes/underscores.
+    const cleaned = raw.replace(/^#/, '').trim();
+    if (!/^[A-Za-z0-9_\-]+$/.test(cleaned)) {
+      return res.status(400).json({ error: 'Invalid order number format' });
     }
     const query = `
       query LookupOrder($q: String!) {
@@ -490,7 +491,12 @@ app.get('/api/track', async (req, res) => {
         }
       }
     `;
-    const data = await shopifyGraphQL(query, { q: `name:#${num}` });
+    // Try the order name verbatim (e.g. DTFN25398). If no match, retry with
+    // a '#' prefix (the default Shopify name format like #1234).
+    let data = await shopifyGraphQL(query, { q: `name:${cleaned}` });
+    if (!(data.data?.orders?.edges || []).length) {
+      data = await shopifyGraphQL(query, { q: `name:#${cleaned}` });
+    }
     const edge = data.data?.orders?.edges?.[0];
     if (!edge) return res.json({ found: false });
     const node = edge.node;
