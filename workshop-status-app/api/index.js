@@ -558,6 +558,27 @@ async function recalculateMachineQueues() {
 }
 
 // ─── Helper: stamp custom.setup_at when machine assigned but setup_at empty ─
+// ─── Helper: append a line to the order's note field ─────────────────────
+async function appendOrderNote(orderGid, line) {
+  const data = await shopifyGraphQL(`
+    query GetNote($id: ID!) {
+      order(id: $id) { note }
+    }
+  `, { id: orderGid });
+  const current = (data.data?.order?.note || '').trim();
+  const newNote = current ? current + '\n' + line : line;
+  const result = await shopifyGraphQL(`
+    mutation UpdateNote($input: OrderInput!) {
+      orderUpdate(input: $input) {
+        order { id }
+        userErrors { field message }
+      }
+    }
+  `, { input: { id: orderGid, note: newNote } });
+  const errs = result.data?.orderUpdate?.userErrors || [];
+  if (errs.length) throw new Error('orderUpdate errors: ' + JSON.stringify(errs));
+}
+
 async function maybeStampSetupAt(orderGid) {
   const data = await shopifyGraphQL(`
     query Check($id: ID!) {
@@ -570,6 +591,7 @@ async function maybeStampSetupAt(orderGid) {
   const machine = (data.data?.order?.machine?.value || '').toUpperCase();
   const setupAt = data.data?.order?.setupAt?.value;
   if ((machine === 'A' || machine === 'B') && !setupAt) {
+    const nowIso = new Date().toISOString();
     const mutation = `
       mutation Stamp($metafields: [MetafieldsSetInput!]!) {
         metafieldsSet(metafields: $metafields) {
@@ -583,9 +605,20 @@ async function maybeStampSetupAt(orderGid) {
         namespace: 'custom',
         key: 'setup_at',
         type: 'date_time',
-        value: new Date().toISOString(),
+        value: nowIso,
       }],
     });
+    // Auto-comment on the order so it shows in the admin's Notes box.
+    const stamp = new Date().toLocaleString('en-GB', {
+      timeZone: 'Europe/London',
+      day: '2-digit', month: 'short', year: 'numeric',
+      hour: '2-digit', minute: '2-digit',
+    });
+    try {
+      await appendOrderNote(orderGid, `[${stamp}] Setup on Machine ${machine}`);
+    } catch (e) {
+      console.error('appendOrderNote failed for', orderGid, e.message);
+    }
   }
 }
 
@@ -810,7 +843,6 @@ app.post('/api/webhooks/orders', async (req, res) => {
       console.log(`Order ${orderId} ${topic} → -${queuedMeters}m (queue ${current}→${Math.max(0, current - queuedMeters)})`);
 
     } else if (topic === 'orders/updated') {
-      // Triggered when admin sets/changes custom.machine on the order.
       await maybeStampSetupAt(orderGid);
       await recalculateMachineQueues();
       console.log(`Order ${orderId} updated → recalculated machine queues`);
