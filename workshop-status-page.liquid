@@ -3,9 +3,9 @@
   File: sections/workshop-status-page.liquid
 
   Reads shop metafields from namespace `workshop_status`:
-    * Status fields (text)   : overall, dtf, uv_dtf, vinyl_stickers, sublimation, artwork_setup
+    * Status fields (text)   : overall, dtf, uv_dtf, artwork_setup
     * Updated fields (date)  : overall_updated, dtf_updated, uv_dtf_updated,
-                               vinyl_stickers_updated, sublimation_updated, artwork_setup_updated
+                               artwork_setup_updated
 
   Status keys may be stored as snake_case (not_busy, full_capacity) OR as
   display labels (Not Busy, Full Capacity) — the template normalises both.
@@ -39,24 +39,6 @@
     assign uv_dtf_status = uv_dtf_mf | default: ''
   endif
 
-  assign vinyl_mf = shop.metafields.workshop_status.vinyl_stickers
-  assign vinyl_status = vinyl_mf.value.status | default: ''
-  if vinyl_status == blank
-    assign vinyl_status = vinyl_mf.value | default: ''
-  endif
-  if vinyl_status == blank
-    assign vinyl_status = vinyl_mf | default: ''
-  endif
-
-  assign sublimation_mf = shop.metafields.workshop_status.sublimation
-  assign sublimation_status = sublimation_mf.value.status | default: ''
-  if sublimation_status == blank
-    assign sublimation_status = sublimation_mf.value | default: ''
-  endif
-  if sublimation_status == blank
-    assign sublimation_status = sublimation_mf | default: ''
-  endif
-
   assign artwork_mf = shop.metafields.workshop_status.artwork_setup
   assign artwork_status = artwork_mf.value.status | default: ''
   if artwork_status == blank
@@ -69,8 +51,6 @@
   assign overall_updated     = shop.metafields.workshop_status.overall_updated.value         | default: shop.metafields.workshop_status.overall_updated         | default: ''
   assign dtf_updated         = shop.metafields.workshop_status.dtf_updated.value             | default: shop.metafields.workshop_status.dtf_updated             | default: ''
   assign uv_dtf_updated      = shop.metafields.workshop_status.uv_dtf_updated.value          | default: shop.metafields.workshop_status.uv_dtf_updated          | default: ''
-  assign vinyl_updated       = shop.metafields.workshop_status.vinyl_stickers_updated.value  | default: shop.metafields.workshop_status.vinyl_stickers_updated  | default: ''
-  assign sublimation_updated = shop.metafields.workshop_status.sublimation_updated.value     | default: shop.metafields.workshop_status.sublimation_updated     | default: ''
   assign artwork_updated     = shop.metafields.workshop_status.artwork_setup_updated.value   | default: shop.metafields.workshop_status.artwork_setup_updated   | default: ''
 
   if overall_updated == blank
@@ -81,12 +61,6 @@
   endif
   if uv_dtf_updated == blank
     assign uv_dtf_updated = shop.metafields.custom.workshop_status_uv_dtf_updated.value | default: shop.metafields.custom.workshop_status_uv_dtf_updated | default: ''
-  endif
-  if vinyl_updated == blank
-    assign vinyl_updated = shop.metafields.custom.workshop_status_vinyl_stickers_updated.value | default: shop.metafields.custom.workshop_status_vinyl_stickers_updated | default: ''
-  endif
-  if sublimation_updated == blank
-    assign sublimation_updated = shop.metafields.custom.workshop_status_sublimation_updated.value | default: shop.metafields.custom.workshop_status_sublimation_updated | default: ''
   endif
   if artwork_updated == blank
     assign artwork_updated = shop.metafields.custom.workshop_status_artwork_setup_updated.value | default: shop.metafields.custom.workshop_status_artwork_setup_updated | default: ''
@@ -162,12 +136,6 @@
   if uv_dtf_updated == blank
     assign uv_dtf_updated = uv_dtf_mf.value.updated_at | default: ''
   endif
-  if vinyl_updated == blank
-    assign vinyl_updated = vinyl_mf.value.updated_at | default: ''
-  endif
-  if sublimation_updated == blank
-    assign sublimation_updated = sublimation_mf.value.updated_at | default: ''
-  endif
   if artwork_updated == blank
     assign artwork_updated = artwork_mf.value.updated_at | default: ''
   endif
@@ -175,8 +143,6 @@
   assign overall_status     = overall_status     | default: 'Not Busy'
   assign dtf_status         = dtf_status         | default: 'Not Busy'
   assign uv_dtf_status      = uv_dtf_status      | default: 'Not Busy'
-  assign vinyl_status       = vinyl_status       | default: 'Not Busy'
-  assign sublimation_status = sublimation_status | default: 'Not Busy'
   assign artwork_status     = artwork_status     | default: 'Not Busy'
 %}
 
@@ -897,100 +863,6 @@
       </div>
 
       {% liquid
-        assign vc = vinyl_status | downcase | replace: ' ', '_' | replace: '-', '_'
-        assign vcl = 'green'
-        assign vinyl_label = 'Not Busy'
-        if vc == 'moderate'
-          assign vcl = 'amber'
-          assign vinyl_label = 'Moderate'
-        elsif vc == 'busy'
-          assign vcl = 'orange'
-          assign vinyl_label = 'Busy'
-        elsif vc == 'full_capacity'
-          assign vcl = 'red'
-          assign vinyl_label = 'Full Capacity'
-        endif
-      %}
-      <div class="ws-card">
-        <div class="ws-card-head">
-          <h3 class="ws-card-title">Vinyl stickers</h3>
-          <div class="ws-card-icon ws-icon-{{ vcl }}">{{ icon_tag }}</div>
-        </div>
-        <p class="ws-card-desc">Vinyl sticker printing and finishing queue.</p>
-        <div class="ws-card-foot">
-          <span class="ws-pill ws-pill-hero ws-s-{{ vcl }}">
-            <span class="ws-pill-dot"></span>
-            {{ vinyl_label }}
-          </span>
-          <span class="ws-foot-time ws-rel" data-iso="{{ vinyl_updated }}">{% if vinyl_updated != blank %}{{ vinyl_updated | date: section.settings.date_format }}{% else %}—{% endif %}</span>
-        </div>
-        {% liquid
-          assign cta_key_dept = vinyl_status | downcase | replace: ' ', '_' | replace: '-', '_'
-          assign show_dept_cta = false
-          if section.settings.vinyl_cta_label != blank and section.settings.vinyl_cta_link != blank
-            if cta_key_dept != 'full_capacity'
-              assign show_dept_cta = true
-            endif
-          endif
-        %}
-        {% if show_dept_cta %}
-          <div class="ws-card-cta">
-            <a class="ws-card-cta-btn" href="{{ section.settings.vinyl_cta_link }}">
-              {{ section.settings.vinyl_cta_label | escape }}
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M13.5 4.5 21 12m0 0-7.5 7.5M21 12H3"/></svg>
-            </a>
-          </div>
-        {% endif %}
-      </div>
-
-      {% liquid
-        assign sc = sublimation_status | downcase | replace: ' ', '_' | replace: '-', '_'
-        assign scl = 'green'
-        assign sublimation_label = 'Not Busy'
-        if sc == 'moderate'
-          assign scl = 'amber'
-          assign sublimation_label = 'Moderate'
-        elsif sc == 'busy'
-          assign scl = 'orange'
-          assign sublimation_label = 'Busy'
-        elsif sc == 'full_capacity'
-          assign scl = 'red'
-          assign sublimation_label = 'Full Capacity'
-        endif
-      %}
-      <div class="ws-card">
-        <div class="ws-card-head">
-          <h3 class="ws-card-title">Sublimation</h3>
-          <div class="ws-card-icon ws-icon-{{ scl }}">{{ icon_palette }}</div>
-        </div>
-        <p class="ws-card-desc">Sublimation production work queue.</p>
-        <div class="ws-card-foot">
-          <span class="ws-pill ws-pill-hero ws-s-{{ scl }}">
-            <span class="ws-pill-dot"></span>
-            {{ sublimation_label }}
-          </span>
-          <span class="ws-foot-time ws-rel" data-iso="{{ sublimation_updated }}">{% if sublimation_updated != blank %}{{ sublimation_updated | date: section.settings.date_format }}{% else %}—{% endif %}</span>
-        </div>
-        {% liquid
-          assign cta_key_dept = sublimation_status | downcase | replace: ' ', '_' | replace: '-', '_'
-          assign show_dept_cta = false
-          if section.settings.sublimation_cta_label != blank and section.settings.sublimation_cta_link != blank
-            if cta_key_dept != 'full_capacity'
-              assign show_dept_cta = true
-            endif
-          endif
-        %}
-        {% if show_dept_cta %}
-          <div class="ws-card-cta">
-            <a class="ws-card-cta-btn" href="{{ section.settings.sublimation_cta_link }}">
-              {{ section.settings.sublimation_cta_label | escape }}
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M13.5 4.5 21 12m0 0-7.5 7.5M21 12H3"/></svg>
-            </a>
-          </div>
-        {% endif %}
-      </div>
-
-      {% liquid
         assign ac = artwork_status | downcase | replace: ' ', '_' | replace: '-', '_'
         assign acl = 'green'
         assign artwork_label = 'Not Busy'
@@ -1170,10 +1042,6 @@
     { "type": "url",      "id": "dtf_cta_link",          "label": "DTF — Button link" },
     { "type": "text",     "id": "uv_dtf_cta_label",      "label": "UV-DTF — Button label",         "default": "Shop UV-DTF" },
     { "type": "url",      "id": "uv_dtf_cta_link",       "label": "UV-DTF — Button link" },
-    { "type": "text",     "id": "vinyl_cta_label",       "label": "Vinyl stickers — Button label", "default": "Shop vinyl stickers" },
-    { "type": "url",      "id": "vinyl_cta_link",        "label": "Vinyl stickers — Button link" },
-    { "type": "text",     "id": "sublimation_cta_label", "label": "Sublimation — Button label",    "default": "Shop sublimation" },
-    { "type": "url",      "id": "sublimation_cta_link",  "label": "Sublimation — Button link" },
     { "type": "text",     "id": "artwork_cta_label",     "label": "Artwork setup — Button label",  "default": "Submit artwork" },
     { "type": "url",      "id": "artwork_cta_link",      "label": "Artwork setup — Button link" },
     { "type": "header",   "content": "Order tracker" },

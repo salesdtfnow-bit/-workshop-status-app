@@ -282,14 +282,10 @@ app.get('/api/statuses', requireAuth, async (_req, res) => {
           overall: metafield(namespace: "workshop_status", key: "overall") { value }
           dtf: metafield(namespace: "workshop_status", key: "dtf") { value }
           uv_dtf: metafield(namespace: "workshop_status", key: "uv_dtf") { value }
-          vinyl_stickers: metafield(namespace: "workshop_status", key: "vinyl_stickers") { value }
-          sublimation: metafield(namespace: "workshop_status", key: "sublimation") { value }
           artwork_setup: metafield(namespace: "workshop_status", key: "artwork_setup") { value }
           overall_updated: metafield(namespace: "workshop_status", key: "overall_updated") { value }
           dtf_updated: metafield(namespace: "workshop_status", key: "dtf_updated") { value }
           uv_dtf_updated: metafield(namespace: "workshop_status", key: "uv_dtf_updated") { value }
-          vinyl_stickers_updated: metafield(namespace: "workshop_status", key: "vinyl_stickers_updated") { value }
-          sublimation_updated: metafield(namespace: "workshop_status", key: "sublimation_updated") { value }
           artwork_setup_updated: metafield(namespace: "workshop_status", key: "artwork_setup_updated") { value }
           dtf_capacity_total: metafield(namespace: "dtfcapacity", key: "total") { value }
           dtf_capacity_used: metafield(namespace: "dtfcapacity", key: "used") { value }
@@ -309,7 +305,7 @@ app.get('/api/statuses', requireAuth, async (_req, res) => {
 });
 
 // ─── API: update a department status ───────────────────────────────────────
-const VALID_DEPARTMENTS = ['overall', 'dtf', 'uv_dtf', 'vinyl_stickers', 'sublimation', 'artwork_setup'];
+const VALID_DEPARTMENTS = ['overall', 'dtf', 'uv_dtf', 'artwork_setup'];
 const VALID_STATUSES = ['not_busy', 'moderate', 'busy', 'full_capacity'];
 
 app.post('/api/update', requireAuth, async (req, res) => {

@@ -11,8 +11,6 @@
   assign overall_raw     = shop.metafields.workshop_status.overall.value         | default: shop.metafields.workshop_status.overall         | default: ''
   assign dtf_raw         = shop.metafields.workshop_status.dtf.value             | default: shop.metafields.workshop_status.dtf             | default: ''
   assign uv_dtf_raw      = shop.metafields.workshop_status.uv_dtf.value          | default: shop.metafields.workshop_status.uv_dtf          | default: ''
-  assign vinyl_raw       = shop.metafields.workshop_status.vinyl_stickers.value  | default: shop.metafields.workshop_status.vinyl_stickers  | default: ''
-  assign sublimation_raw = shop.metafields.workshop_status.sublimation.value     | default: shop.metafields.workshop_status.sublimation     | default: ''
   assign artwork_raw     = shop.metafields.workshop_status.artwork_setup.value   | default: shop.metafields.workshop_status.artwork_setup   | default: ''
 
   assign overall_status = shop.metafields.workshop_status.overall.value.status | default: ''
@@ -30,16 +28,6 @@
     assign uv_dtf_status = uv_dtf_raw
   endif
 
-  assign vinyl_status = shop.metafields.workshop_status.vinyl_stickers.value.status | default: ''
-  if vinyl_status == blank and vinyl_raw != blank
-    assign vinyl_status = vinyl_raw
-  endif
-
-  assign sublimation_status = shop.metafields.workshop_status.sublimation.value.status | default: ''
-  if sublimation_status == blank and sublimation_raw != blank
-    assign sublimation_status = sublimation_raw
-  endif
-
   assign artwork_status = shop.metafields.workshop_status.artwork_setup.value.status | default: ''
   if artwork_status == blank and artwork_raw != blank
     assign artwork_status = artwork_raw
@@ -48,8 +36,6 @@
   assign overall_status     = overall_status     | default: 'Not Busy'
   assign dtf_status         = dtf_status         | default: 'Not Busy'
   assign uv_dtf_status      = uv_dtf_status      | default: 'Not Busy'
-  assign vinyl_status       = vinyl_status       | default: 'Not Busy'
-  assign sublimation_status = sublimation_status | default: 'Not Busy'
   assign artwork_status     = artwork_status     | default: 'Not Busy'
 
   assign dtf_cap_total = shop.metafields.dtfcapacity.total.value | default: shop.metafields.dtfcapacity.total | default: 0 | plus: 0
@@ -324,48 +310,6 @@
           <span class="ww-chip-label">UV-DTF</span>
           <span class="ww-chip-dot ww-d-{{ ucl }}"></span>
           <span class="ww-chip-val ww-t-{{ ucl }}">{{ uv_dtf_label }}</span>
-        </span>
-
-        {% liquid
-          assign vc = vinyl_status | downcase | replace: ' ', '_' | replace: '-', '_'
-          assign vcl = 'green'
-          assign vinyl_label = 'Not Busy'
-          if vc == 'moderate'
-            assign vcl = 'amber'
-            assign vinyl_label = 'Moderate'
-          elsif vc == 'busy'
-            assign vcl = 'orange'
-            assign vinyl_label = 'Busy'
-          elsif vc == 'full_capacity'
-            assign vcl = 'red'
-            assign vinyl_label = 'Full Capacity'
-          endif
-        %}
-        <span class="ww-chip">
-          <span class="ww-chip-label">Stickers</span>
-          <span class="ww-chip-dot ww-d-{{ vcl }}"></span>
-          <span class="ww-chip-val ww-t-{{ vcl }}">{{ vinyl_label }}</span>
-        </span>
-
-        {% liquid
-          assign sc = sublimation_status | downcase | replace: ' ', '_' | replace: '-', '_'
-          assign scl = 'green'
-          assign sublimation_label = 'Not Busy'
-          if sc == 'moderate'
-            assign scl = 'amber'
-            assign sublimation_label = 'Moderate'
-          elsif sc == 'busy'
-            assign scl = 'orange'
-            assign sublimation_label = 'Busy'
-          elsif sc == 'full_capacity'
-            assign scl = 'red'
-            assign sublimation_label = 'Full Capacity'
-          endif
-        %}
-        <span class="ww-chip">
-          <span class="ww-chip-label">Sublimation</span>
-          <span class="ww-chip-dot ww-d-{{ scl }}"></span>
-          <span class="ww-chip-val ww-t-{{ scl }}">{{ sublimation_label }}</span>
         </span>
 
         {% liquid
