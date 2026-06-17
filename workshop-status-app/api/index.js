@@ -459,6 +459,124 @@ app.post('/api/machine', requireAuth, async (req, res) => {
 // ─── API: customer-facing order tracker ───────────────────────────────────
 // GET /api/track?order=1234 → returns { found, name, machine, setupAt, fulfillmentStatus, displayFinancialStatus }
 // No auth — designed for the storefront tracker form. Only exposes setup info.
+// ─── API: bulk-assign machine + setup time from a CSV upload ──────────────
+// Body: { orders: ["DTFN26807", ...], machine: "A"|"B", setupAt: ISO string }
+// For each order, skip if setup_at is already stamped, else set
+// custom.machine + custom.setup_at + custom.last_commented_machine and
+// post a Timeline comment. Returns per-order status.
+app.post('/api/bulk-assign', requireAuth, async (req, res) => {
+  try {
+    const { orders, machine, setupAt } = req.body || {};
+    if (!Array.isArray(orders) || orders.length === 0) {
+      return res.status(400).json({ error: 'orders must be a non-empty array' });
+    }
+    const M = String(machine || '').toUpperCase();
+    if (M !== 'A' && M !== 'B') {
+      return res.status(400).json({ error: 'machine must be "A" or "B"' });
+    }
+    const setupIso = setupAt && !isNaN(new Date(setupAt))
+      ? new Date(setupAt).toISOString()
+      : new Date().toISOString();
+
+    // Look up each order, sequentially to be gentle on the API.
+    const results = [];
+    for (const raw of orders) {
+      const cleaned = String(raw || '').replace(/^#/, '').trim();
+      if (!/^[A-Za-z0-9_\-]+$/.test(cleaned)) {
+        results.push({ order: raw, status: 'invalid' });
+        continue;
+      }
+      try {
+        // Try `name:#cleaned` and `name:cleaned` (Shopify is finicky)
+        let found = null;
+        for (const q of [`name:#${cleaned}`, `name:${cleaned}`]) {
+          const data = await shopifyGraphQL(`
+            query($q: String!) {
+              orders(first: 1, query: $q) {
+                edges {
+                  node {
+                    id
+                    name
+                    setupAt: metafield(namespace: "custom", key: "setup_at") { value }
+                    machineMf: metafield(namespace: "custom", key: "machine") { value }
+                  }
+                }
+              }
+            }
+          `, { q });
+          const node = data.data?.orders?.edges?.[0]?.node;
+          if (node) { found = node; break; }
+        }
+        if (!found) {
+          results.push({ order: cleaned, status: 'not_found' });
+          continue;
+        }
+
+        // Skip if already stamped (overwrite policy = skip)
+        if (found.setupAt?.value) {
+          results.push({ order: cleaned, name: found.name, status: 'skipped', reason: 'already stamped' });
+          continue;
+        }
+
+        // Set metafields
+        const setRes = await shopifyGraphQL(`
+          mutation($mf: [MetafieldsSetInput!]!) {
+            metafieldsSet(metafields: $mf) {
+              userErrors { field message }
+            }
+          }
+        `, {
+          mf: [
+            { ownerId: found.id, namespace: 'custom', key: 'machine',
+              type: 'single_line_text_field', value: M },
+            { ownerId: found.id, namespace: 'custom', key: 'setup_at',
+              type: 'date_time', value: setupIso },
+            { ownerId: found.id, namespace: 'custom', key: 'last_commented_machine',
+              type: 'single_line_text_field', value: M },
+          ],
+        });
+        const errs = setRes.data?.metafieldsSet?.userErrors || [];
+        if (errs.length) {
+          results.push({ order: cleaned, name: found.name, status: 'error', message: JSON.stringify(errs) });
+          continue;
+        }
+
+        // Post timeline comment (best-effort)
+        const stamp = new Date(setupIso).toLocaleString('en-GB', {
+          timeZone: 'Europe/London',
+          day: '2-digit', month: 'short', year: 'numeric',
+          hour: '2-digit', minute: '2-digit',
+        });
+        try {
+          await postTimelineComment(found.id, `Setup on Machine ${M} at ${stamp} (bulk CSV)`);
+        } catch (e) {
+          console.error('bulk-assign postTimelineComment failed for', cleaned, e.message);
+        }
+
+        results.push({ order: cleaned, name: found.name, status: 'updated' });
+      } catch (e) {
+        console.error('bulk-assign error for', cleaned, e);
+        results.push({ order: cleaned, status: 'error', message: e.message });
+      }
+    }
+
+    // Re-sync machine queues at the end
+    try { await recalculateMachineQueues(); } catch (_) {}
+
+    const summary = {
+      total: results.length,
+      updated:   results.filter(r => r.status === 'updated').length,
+      skipped:   results.filter(r => r.status === 'skipped').length,
+      not_found: results.filter(r => r.status === 'not_found').length,
+      errors:    results.filter(r => r.status === 'error' || r.status === 'invalid').length,
+    };
+    res.json({ summary, results });
+  } catch (e) {
+    console.error('POST /api/bulk-assign error:', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
 app.get('/api/track', async (req, res) => {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET');
@@ -766,12 +884,12 @@ async function setOrderQueuedMeters(orderGid, meters) {
       namespace: 'custom',
       key: 'custom_dtf_queued_cm',
       type: 'number_decimal',
-      value: String(Number(meters.toFixed(2))),
+      value: String(meters),
     }],
   };
   const data = await shopifyGraphQL(mutation, variables);
   const errors = data.data?.metafieldsSet?.userErrors || [];
-  if (errors.length) throw new Error('metafieldsSet errors: ' + JSON.stringify(errors));
+  if (errors.length) throw new Error('setOrderQueuedMeters errors: ' + JSON.stringify(errors));
 }
 
 async function readCapacityUsed() {
@@ -782,29 +900,22 @@ async function readCapacityUsed() {
       }
     }
   `);
-  const v = data.data?.shop?.used?.value;
-  return v ? Number(v) : 0;
+  return Number(data.data?.shop?.used?.value || 0);
 }
 
-// Map queue meterage (cm) to a DTF status key.
-// Thresholds:
-//   < 100 cm        → not_busy
-//   100 – 199 cm    → moderate
-//   200 – 299 cm    → busy
-//   300 cm or more  → full_capacity
-function queueToStatus(cm) {
-  if (cm >= 300) return 'full_capacity';
-  if (cm >= 200) return 'busy';
-  if (cm >= 100) return 'moderate';
-  return 'not_busy';
+function queueToStatus(meters) {
+  if (meters < 100) return 'not_busy';
+  if (meters < 200) return 'moderate';
+  if (meters < 300) return 'busy';
+  return 'full_capacity';
 }
 
 async function writeCapacityUsed(newUsed) {
   const shopGid = await getShopGid();
-  const safeUsed = Math.max(0, Number(Number(newUsed).toFixed(2)));
-  const status = queueToStatus(safeUsed);
+  const status = queueToStatus(newUsed);
+  const nowIso = new Date().toISOString();
   const mutation = `
-    mutation SetUsed($metafields: [MetafieldsSetInput!]!) {
+    mutation Write($metafields: [MetafieldsSetInput!]!) {
       metafieldsSet(metafields: $metafields) {
         userErrors { field message }
       }
@@ -817,7 +928,7 @@ async function writeCapacityUsed(newUsed) {
         namespace: 'dtfcapacity',
         key: 'used',
         type: 'number_decimal',
-        value: String(safeUsed),
+        value: String(Math.max(0, newUsed)),
       },
       {
         ownerId: shopGid,
@@ -831,7 +942,7 @@ async function writeCapacityUsed(newUsed) {
         namespace: 'workshop_status',
         key: 'dtf_updated',
         type: 'date_time',
-        value: new Date().toISOString(),
+        value: nowIso,
       },
     ],
   };
@@ -880,8 +991,6 @@ app.post('/api/webhooks/orders', async (req, res) => {
       await recalculateMachineQueues();
       console.log(`Order ${orderId} ${topic} → -${queuedMeters}m (queue ${current}→${Math.max(0, current - queuedMeters)})`);
     } else if (topic === 'orders/updated') {
-      // Re-sync machine queues + stamp setup_at / post timeline comment when machine
-      // assignment changes.
       await recalculateMachineQueues();
       try {
         await maybeStampSetupAt(orderGid);

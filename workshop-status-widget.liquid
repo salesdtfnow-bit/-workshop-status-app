@@ -1,10 +1,11 @@
 {% comment %}
-  Workshop Status Widget — v2.1 (label fix)
+  Workshop Status Widget — v3.0 (info-rich tiles)
   File: sections/workshop-status-widget.liquid
-  Compact banner for homepage or product pages.
 
-  Normalises status keys so that values stored as snake_case
-  (e.g. not_busy, full_capacity) render with proper labels.
+  Larger banner with per-department tiles. Each tile shows status,
+  a status-tinted background, an icon, and a sub-line with extra
+  context (DTF capacity %, queue meters, dispatch ETA, relative
+  last-updated times).
 {% endcomment %}
 
 {% liquid
@@ -44,27 +45,58 @@
   if dtf_cap_total > 0
     assign dtf_cap_pct = dtf_cap_used | times: 100 | divided_by: dtf_cap_total
   endif
+
+  assign dispatch_msg = ''
+  if dtf_cap_total > 0
+    assign cutoff_hour = 13
+    assign now_hour = 'now' | date: '%H' | plus: 0
+    if dtf_cap_used <= dtf_cap_total
+      if now_hour < cutoff_hour
+        assign dispatch_msg = 'Dispatched today'
+      else
+        assign dispatch_msg = 'Dispatched tomorrow'
+      endif
+    else
+      assign over = dtf_cap_used | minus: dtf_cap_total
+      assign extra_days_raw = over | divided_by: dtf_cap_total
+      assign extra_days_mod = over | modulo: dtf_cap_total
+      assign extra_days = extra_days_raw | plus: 1
+      if extra_days_mod == 0
+        assign extra_days = extra_days_raw
+      endif
+      if now_hour >= cutoff_hour
+        assign extra_days = extra_days | plus: 1
+      endif
+      assign dispatch_msg = 'Dispatched in ' | append: extra_days | append: ' day'
+      if extra_days > 1
+        assign dispatch_msg = dispatch_msg | append: 's'
+      endif
+    endif
+  endif
+
+  assign dtf_updated     = shop.metafields.workshop_status.dtf_updated.value     | default: shop.metafields.workshop_status.dtf_updated     | default: ''
+  assign uv_updated      = shop.metafields.workshop_status.uv_dtf_updated.value  | default: shop.metafields.workshop_status.uv_dtf_updated  | default: ''
+  assign artwork_updated = shop.metafields.workshop_status.artwork_setup_updated.value | default: shop.metafields.workshop_status.artwork_setup_updated | default: ''
 %}
 
 <style>
-  @keyframes wsw2-pulse {
-    0%, 100% { opacity: 1; }
-    50% { opacity: 0.4; }
-  }
-
   #WSW2-{{ section.id }} {
     --ww-bg: {{ section.settings.background_color }};
     --ww-surface: {{ section.settings.card_background_color }};
     --ww-text: {{ section.settings.text_color }};
     --ww-muted: {{ section.settings.muted_text_color }};
-    --ww-green: #22c55e;
+    --ww-green: #16a34a;
     --ww-green-soft: #dcfce7;
-    --ww-amber: #eab308;
-    --ww-amber-soft: #fef9c3;
-    --ww-orange: #f97316;
+    --ww-green-tint: #f0fdf4;
+    --ww-amber: #ca8a04;
+    --ww-amber-soft: #fef3c7;
+    --ww-amber-tint: #fefce8;
+    --ww-orange: #ea580c;
     --ww-orange-soft: #ffedd5;
-    --ww-red: #ef4444;
+    --ww-orange-tint: #fff7ed;
+    --ww-red: #dc2626;
     --ww-red-soft: #fee2e2;
+    --ww-red-tint: #fef2f2;
     background: var(--ww-bg);
     color: var(--ww-text);
     padding: {{ section.settings.padding_top }}px 0 {{ section.settings.padding_bottom }}px;
@@ -75,127 +107,192 @@
 
   #WSW2-{{ section.id }} .ww-wrap {
     width: 100%;
-    max-width: 1100px;
+    max-width: 1200px;
     margin: 0 auto;
     padding: 0 20px;
   }
 
   #WSW2-{{ section.id }} .ww-bar {
     display: flex;
-    align-items: center;
-    gap: 20px;
-    padding: 16px 24px;
-    border-radius: 14px;
+    align-items: stretch;
+    gap: 18px;
+    padding: 20px 24px;
+    border-radius: 18px;
     background: var(--ww-surface);
     border: 1px solid rgba(0,0,0,0.06);
-    box-shadow: 0 1px 3px rgba(0,0,0,0.04), 0 4px 12px rgba(0,0,0,0.03);
+    box-shadow: 0 1px 3px rgba(0,0,0,0.04), 0 6px 18px rgba(0,0,0,0.04);
   }
 
   #WSW2-{{ section.id }} .ww-left {
     display: flex;
-    align-items: center;
-    gap: 10px;
+    flex-direction: column;
+    justify-content: center;
+    gap: 4px;
     flex-shrink: 0;
+    padding-right: 18px;
+    border-right: 1px solid rgba(0,0,0,0.08);
+  }
+
+  #WSW2-{{ section.id }} .ww-left-top {
+    display: flex;
+    align-items: center;
+    gap: 8px;
   }
 
   #WSW2-{{ section.id }} .ww-live-dot {
-    width: 8px;
-    height: 8px;
+    width: 9px;
+    height: 9px;
     border-radius: 50%;
     background: var(--ww-green);
+    box-shadow: 0 0 0 4px rgba(22,163,74,0.18);
     animation: wsw2-pulse 2s ease-in-out infinite;
     flex-shrink: 0;
   }
 
+  @keyframes wsw2-pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.5; }
+  }
+
   #WSW2-{{ section.id }} .ww-title {
     margin: 0;
-    font-size: 0.95rem;
-    font-weight: 700;
+    font-size: 1.05rem;
+    font-weight: 800;
     color: var(--ww-text);
+    white-space: nowrap;
+    letter-spacing: -0.01em;
+  }
+
+  #WSW2-{{ section.id }} .ww-subtitle {
+    font-size: 0.78rem;
+    color: var(--ww-muted);
+    font-weight: 500;
     white-space: nowrap;
   }
 
-  #WSW2-{{ section.id }} .ww-divider {
-    width: 1px;
-    height: 28px;
-    background: rgba(0,0,0,0.08);
-    flex-shrink: 0;
-  }
-
   #WSW2-{{ section.id }} .ww-items {
-    display: flex;
-    flex-wrap: wrap;
-    align-items: center;
-    gap: 8px;
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 10px;
     flex: 1;
     min-width: 0;
   }
 
-  #WSW2-{{ section.id }} .ww-chip {
-    display: inline-flex;
-    align-items: center;
+  #WSW2-{{ section.id }} .ww-tile {
+    display: flex;
+    flex-direction: column;
     gap: 6px;
-    padding: 5px 10px;
-    border-radius: 8px;
-    font-size: 0.82rem;
-    font-weight: 600;
-    white-space: nowrap;
-    border: 1px solid rgba(0,0,0,0.04);
+    padding: 12px 14px;
+    border-radius: 12px;
+    border: 1px solid rgba(0,0,0,0.06);
     background: rgba(0,0,0,0.015);
+    min-width: 0;
   }
 
-  #WSW2-{{ section.id }} .ww-chip-label {
+  #WSW2-{{ section.id }} .ww-tile-head {
+    display: flex;
+    align-items: center;
+    gap: 8px;
     color: var(--ww-muted);
-    font-weight: 500;
   }
 
-  #WSW2-{{ section.id }} .ww-chip-dot {
-    width: 7px;
-    height: 7px;
+  #WSW2-{{ section.id }} .ww-tile-icon {
+    width: 16px;
+    height: 16px;
+    flex-shrink: 0;
+    color: var(--ww-muted);
+  }
+
+  #WSW2-{{ section.id }} .ww-tile-label {
+    font-size: 0.78rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+  }
+
+  #WSW2-{{ section.id }} .ww-tile-val {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 1.05rem;
+    font-weight: 800;
+    letter-spacing: -0.01em;
+    line-height: 1.15;
+  }
+
+  #WSW2-{{ section.id }} .ww-tile-dot {
+    width: 9px;
+    height: 9px;
     border-radius: 50%;
     flex-shrink: 0;
   }
 
-  #WSW2-{{ section.id }} .ww-chip-val {
-    font-weight: 700;
-  }
-
-  #WSW2-{{ section.id }} .ww-chip-cap {
+  #WSW2-{{ section.id }} .ww-tile-sub {
     font-size: 0.78rem;
     font-weight: 500;
     color: var(--ww-muted);
-    margin-left: 2px;
+    line-height: 1.2;
     font-variant-numeric: tabular-nums;
   }
+
+  /* Status-tinted backgrounds */
+  #WSW2-{{ section.id }} .ww-tile.ww-s-green  { background: var(--ww-green-tint);  border-color: rgba(22,163,74,0.18); }
+  #WSW2-{{ section.id }} .ww-tile.ww-s-amber  { background: var(--ww-amber-tint);  border-color: rgba(202,138,4,0.20); }
+  #WSW2-{{ section.id }} .ww-tile.ww-s-orange { background: var(--ww-orange-tint); border-color: rgba(234,88,12,0.22); }
+  #WSW2-{{ section.id }} .ww-tile.ww-s-red    { background: var(--ww-red-tint);    border-color: rgba(220,38,38,0.22); }
 
   #WSW2-{{ section.id }} .ww-d-green { background-color: var(--ww-green); }
   #WSW2-{{ section.id }} .ww-d-amber { background-color: var(--ww-amber); }
   #WSW2-{{ section.id }} .ww-d-orange { background-color: var(--ww-orange); }
   #WSW2-{{ section.id }} .ww-d-red { background-color: var(--ww-red); }
 
-  #WSW2-{{ section.id }} .ww-t-green { color: var(--ww-green); }
-  #WSW2-{{ section.id }} .ww-t-amber { color: var(--ww-amber); }
+  #WSW2-{{ section.id }} .ww-t-green  { color: var(--ww-green); }
+  #WSW2-{{ section.id }} .ww-t-amber  { color: var(--ww-amber); }
   #WSW2-{{ section.id }} .ww-t-orange { color: var(--ww-orange); }
-  #WSW2-{{ section.id }} .ww-t-red { color: var(--ww-red); }
+  #WSW2-{{ section.id }} .ww-t-red    { color: var(--ww-red); }
+
+  /* DTF mini progress bar */
+  #WSW2-{{ section.id }} .ww-prog {
+    display: block;
+    width: 100%;
+    height: 6px;
+    border-radius: 999px;
+    background-color: rgba(0,0,0,0.08);
+    overflow: hidden;
+    margin-top: 4px;
+    position: relative;
+  }
+  #WSW2-{{ section.id }} .ww-prog-fill {
+    display: block;
+    height: 6px;
+    min-width: 6px;
+    border-radius: 999px;
+    background-color: #16a34a;
+    background-image: linear-gradient(90deg, #16a34a 0%, #ca8a04 55%, #dc2626 100%);
+    background-size: 100% 100%;
+    background-repeat: no-repeat;
+    transition: width 0.4s ease;
+  }
 
   #WSW2-{{ section.id }} .ww-cta {
     display: inline-flex;
     align-items: center;
     gap: 6px;
-    padding: 8px 16px;
+    padding: 10px 18px;
     border-radius: 999px;
     background: {{ section.settings.button_background_color }};
     color: {{ section.settings.button_text_color }};
-    font-size: 0.85rem;
+    font-size: 0.9rem;
     font-weight: 700;
     text-decoration: none;
     white-space: nowrap;
     flex-shrink: 0;
+    align-self: center;
     transition: opacity 0.2s ease, transform 0.2s ease;
   }
 
   #WSW2-{{ section.id }} .ww-cta:hover {
-    opacity: 0.88;
+    opacity: 0.9;
     transform: translateY(-1px);
   }
 
@@ -205,33 +302,37 @@
   }
 
   @media screen and (max-width: 989px) {
-    #WSW2-{{ section.id }} .ww-bar {
-      flex-wrap: wrap;
+    #WSW2-{{ section.id }} .ww-bar { flex-wrap: wrap; }
+    #WSW2-{{ section.id }} .ww-left {
+      border-right: none;
+      padding-right: 0;
+      flex-direction: row;
+      align-items: center;
+      gap: 10px;
+      width: 100%;
+      padding-bottom: 4px;
     }
-    #WSW2-{{ section.id }} .ww-divider {
-      display: none;
-    }
+    #WSW2-{{ section.id }} .ww-items { flex: 1 1 100%; }
   }
 
   @media screen and (max-width: 749px) {
     #WSW2-{{ section.id }} .ww-bar {
       flex-direction: column;
-      align-items: flex-start;
+      align-items: stretch;
       gap: 12px;
-      padding: 16px 18px;
+      padding: 16px;
     }
     #WSW2-{{ section.id }} .ww-items {
-      width: 100%;
-    }
-    #WSW2-{{ section.id }} .ww-chip {
-      flex: 1;
-      justify-content: center;
-      min-width: calc(50% - 4px);
+      grid-template-columns: repeat(2, 1fr);
     }
     #WSW2-{{ section.id }} .ww-cta {
       width: 100%;
       justify-content: center;
     }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    #WSW2-{{ section.id }} .ww-live-dot { animation: none; }
   }
 </style>
 
@@ -239,11 +340,12 @@
   <div class="ww-wrap">
     <div class="ww-bar">
       <div class="ww-left">
-        <span class="ww-live-dot"></span>
-        <h2 class="ww-title">{{ section.settings.heading | escape }}</h2>
+        <div class="ww-left-top">
+          <span class="ww-live-dot"></span>
+          <h2 class="ww-title">{{ section.settings.heading | escape }}</h2>
+        </div>
+        <span class="ww-subtitle">Live workshop capacity</span>
       </div>
-
-      <span class="ww-divider"></span>
 
       <div class="ww-items">
         {% liquid
@@ -261,11 +363,19 @@
             assign overall_label = 'Full Capacity'
           endif
         %}
-        <span class="ww-chip">
-          <span class="ww-chip-label">Overall</span>
-          <span class="ww-chip-dot ww-d-{{ ocl }}"></span>
-          <span class="ww-chip-val ww-t-{{ ocl }}">{{ overall_label }}</span>
-        </span>
+        <div class="ww-tile ww-s-{{ ocl }}">
+          <div class="ww-tile-head">
+            <svg class="ww-tile-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6"/></svg>
+            <span class="ww-tile-label">Overall</span>
+          </div>
+          <div class="ww-tile-val ww-t-{{ ocl }}">
+            <span class="ww-tile-dot ww-d-{{ ocl }}"></span>
+            {{ overall_label }}
+          </div>
+          <div class="ww-tile-sub">
+            {% if dispatch_msg != blank %}{{ dispatch_msg }}{% else %}Workshop running normally{% endif %}
+          </div>
+        </div>
 
         {% liquid
           assign dc = dtf_status | downcase | replace: ' ', '_' | replace: '-', '_'
@@ -281,15 +391,30 @@
             assign dcl = 'red'
             assign dtf_label = 'Full Capacity'
           endif
+          assign dtf_pct_int = dtf_cap_pct | floor
+          assign dtf_pct_clamped = dtf_pct_int
+          if dtf_pct_clamped > 100
+            assign dtf_pct_clamped = 100
+          endif
+          assign dtf_used_int = dtf_cap_used | round: 0
+          assign dtf_total_int = dtf_cap_total | round: 0
         %}
-        <span class="ww-chip">
-          <span class="ww-chip-label">DTF</span>
-          <span class="ww-chip-dot ww-d-{{ dcl }}"></span>
-          <span class="ww-chip-val ww-t-{{ dcl }}">{{ dtf_label }}</span>
+        <div class="ww-tile ww-s-{{ dcl }}">
+          <div class="ww-tile-head">
+            <svg class="ww-tile-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M6.72 13.83c-.24.03-.48.06-.72.1m.72-.1a42.4 42.4 0 0 1 10.56 0m-10.56 0L6.34 18m10.94-4.17c.24.03.48.06.72.1m-.72-.1L17.66 18m0 0 .23 2.52a1.13 1.13 0 0 1-1.12 1.23H7.23c-.66 0-1.18-.57-1.12-1.23L6.34 18m11.32 0h1.09A2.25 2.25 0 0 0 21 15.75V9.46c0-1.08-.77-2.02-1.84-2.18a48 48 0 0 0-1.91-.25M6.34 18H5.25A2.25 2.25 0 0 1 3 15.75V9.46c0-1.08.77-2.02 1.84-2.18.63-.09 1.27-.18 1.91-.25m10.5 0a48.5 48.5 0 0 0-10.5 0m10.5 0V3.38c0-.62-.5-1.13-1.13-1.13h-8.25c-.62 0-1.12.5-1.12 1.13v3.66"/></svg>
+            <span class="ww-tile-label">DTF</span>
+          </div>
+          <div class="ww-tile-val ww-t-{{ dcl }}">
+            <span class="ww-tile-dot ww-d-{{ dcl }}"></span>
+            {{ dtf_label }}
+          </div>
           {% if dtf_cap_total > 0 %}
-            <span class="ww-chip-cap">· {{ dtf_cap_pct | floor }}% full</span>
+            <div class="ww-tile-sub">{{ dtf_used_int }}m of {{ dtf_total_int }}m queued · {{ dtf_pct_int }}%</div>
+            <div class="ww-prog"><div class="ww-prog-fill" style="width: {{ dtf_pct_clamped }}%;"></div></div>
+          {% else %}
+            <div class="ww-tile-sub ws-rel" data-iso="{{ dtf_updated }}">{% if dtf_updated != blank %}Updated {{ dtf_updated | date: '%H:%M' }}{% else %}Live{% endif %}</div>
           {% endif %}
-        </span>
+        </div>
 
         {% liquid
           assign uc = uv_dtf_status | downcase | replace: ' ', '_' | replace: '-', '_'
@@ -306,11 +431,17 @@
             assign uv_dtf_label = 'Full Capacity'
           endif
         %}
-        <span class="ww-chip">
-          <span class="ww-chip-label">UV-DTF</span>
-          <span class="ww-chip-dot ww-d-{{ ucl }}"></span>
-          <span class="ww-chip-val ww-t-{{ ucl }}">{{ uv_dtf_label }}</span>
-        </span>
+        <div class="ww-tile ww-s-{{ ucl }}">
+          <div class="ww-tile-head">
+            <svg class="ww-tile-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M15.59 14.37a6 6 0 0 1-5.84 7.38v-4.8m5.84-2.58a14.98 14.98 0 0 0 6.16-12.12A14.98 14.98 0 0 0 9.63 8.41m5.96 5.96a14.93 14.93 0 0 1-5.84 2.58m-.12-8.54a6 6 0 0 0-7.38 5.84h4.8m2.58-5.84a14.93 14.93 0 0 0-2.58 5.84m2.7 2.7c-.1.02-.21.04-.31.06a15.09 15.09 0 0 1-2.45-2.45 14.9 14.9 0 0 1 .06-.31M16.5 9a1.5 1.5 0 1 1-3 0 1.5 1.5 0 0 1 3 0Z"/></svg>
+            <span class="ww-tile-label">UV-DTF</span>
+          </div>
+          <div class="ww-tile-val ww-t-{{ ucl }}">
+            <span class="ww-tile-dot ww-d-{{ ucl }}"></span>
+            {{ uv_dtf_label }}
+          </div>
+          <div class="ww-tile-sub ws-rel" data-iso="{{ uv_updated }}">{% if uv_updated != blank %}Updated {{ uv_updated | date: '%H:%M' }}{% else %}Live{% endif %}</div>
+        </div>
 
         {% liquid
           assign ac = artwork_status | downcase | replace: ' ', '_' | replace: '-', '_'
@@ -327,11 +458,17 @@
             assign artwork_label = 'Full Capacity'
           endif
         %}
-        <span class="ww-chip">
-          <span class="ww-chip-label">Artwork</span>
-          <span class="ww-chip-dot ww-d-{{ acl }}"></span>
-          <span class="ww-chip-val ww-t-{{ acl }}">{{ artwork_label }}</span>
-        </span>
+        <div class="ww-tile ww-s-{{ acl }}">
+          <div class="ww-tile-head">
+            <svg class="ww-tile-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="m16.86 4.49 1.69-1.69a1.875 1.875 0 1 1 2.65 2.65L10.58 16.07a4.5 4.5 0 0 1-1.9 1.13L6 18l.8-2.69a4.5 4.5 0 0 1 1.13-1.9l8.93-8.93Zm0 0L19.5 7.13M18 14v4.75A2.25 2.25 0 0 1 15.75 21H5.25A2.25 2.25 0 0 1 3 18.75V8.25A2.25 2.25 0 0 1 5.25 6H10"/></svg>
+            <span class="ww-tile-label">Artwork</span>
+          </div>
+          <div class="ww-tile-val ww-t-{{ acl }}">
+            <span class="ww-tile-dot ww-d-{{ acl }}"></span>
+            {{ artwork_label }}
+          </div>
+          <div class="ww-tile-sub ws-rel" data-iso="{{ artwork_updated }}">{% if artwork_updated != blank %}Updated {{ artwork_updated | date: '%H:%M' }}{% else %}Live{% endif %}</div>
+        </div>
       </div>
 
       {% if section.settings.button_label != blank and section.settings.button_link != blank %}
@@ -344,6 +481,30 @@
   </div>
 </section>
 
+<script>
+  (function () {
+    function relTime(iso) {
+      if (!iso) return '';
+      var d = new Date(iso);
+      if (isNaN(d)) return '';
+      var diff = Math.floor((Date.now() - d.getTime()) / 1000);
+      if (diff < 60) return 'Updated just now';
+      if (diff < 3600) return 'Updated ' + Math.floor(diff / 60) + 'm ago';
+      if (diff < 86400) return 'Updated ' + Math.floor(diff / 3600) + 'h ago';
+      var days = Math.floor(diff / 86400);
+      if (days < 7) return 'Updated ' + days + 'd ago';
+      return 'Updated ' + d.toLocaleDateString();
+    }
+    var root = document.getElementById('WSW2-{{ section.id }}');
+    if (!root) return;
+    root.querySelectorAll('.ws-rel').forEach(function (el) {
+      var iso = el.getAttribute('data-iso');
+      var txt = relTime(iso);
+      if (txt) el.textContent = txt;
+    });
+  })();
+</script>
+
 {% schema %}
 {
   "name": "Workshop status widget",
@@ -354,13 +515,13 @@
     { "type": "url", "id": "button_link", "label": "Button link" },
     { "type": "text", "id": "date_format", "label": "Date format", "default": "%d %b %Y, %H:%M" },
     { "type": "color", "id": "background_color", "label": "Background colour", "default": "#ffffff" },
-    { "type": "color", "id": "card_background_color", "label": "Panel background", "default": "#f8f9fa" },
+    { "type": "color", "id": "card_background_color", "label": "Panel background", "default": "#ffffff" },
     { "type": "color", "id": "text_color", "label": "Text colour", "default": "#111827" },
     { "type": "color", "id": "muted_text_color", "label": "Secondary text", "default": "#6b7280" },
     { "type": "color", "id": "button_background_color", "label": "Button background", "default": "#111827" },
     { "type": "color", "id": "button_text_color", "label": "Button text colour", "default": "#ffffff" },
-    { "type": "range", "id": "padding_top", "min": 12, "max": 80, "step": 4, "unit": "px", "label": "Top padding", "default": 20 },
-    { "type": "range", "id": "padding_bottom", "min": 12, "max": 80, "step": 4, "unit": "px", "label": "Bottom padding", "default": 20 }
+    { "type": "range", "id": "padding_top", "min": 12, "max": 80, "step": 4, "unit": "px", "label": "Top padding", "default": 24 },
+    { "type": "range", "id": "padding_bottom", "min": 12, "max": 80, "step": 4, "unit": "px", "label": "Bottom padding", "default": 24 }
   ],
   "presets": [
     { "name": "Workshop status widget" }

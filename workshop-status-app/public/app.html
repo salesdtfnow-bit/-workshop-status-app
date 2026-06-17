@@ -118,6 +118,118 @@
       .grid { grid-template-columns: 1fr; }
       .capacity-inputs { grid-template-columns: 1fr; }
     }
+
+    /* Bulk-assign CSV card */
+    .bulk-card {
+      margin-top: 24px;
+      padding: 22px 24px;
+      background: #ffffff;
+      border: 1px solid #e5e7eb;
+      border-radius: 14px;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.04);
+    }
+    .bulk-head h2 { margin: 0 0 4px; font-size: 1.05rem; font-weight: 700; }
+    .bulk-head .sub { margin: 0 0 16px; color: #6b7280; font-size: 0.85rem; }
+    .bulk-form {
+      display: grid;
+      grid-template-columns: 1.4fr 1fr 1.4fr;
+      gap: 14px;
+      margin-bottom: 14px;
+    }
+    .bulk-field { display: flex; flex-direction: column; gap: 6px; }
+    .bulk-label { font-size: 0.75rem; font-weight: 600; color: #374151; text-transform: uppercase; letter-spacing: 0.04em; }
+    .bulk-field input[type=file],
+    .bulk-field input[type=datetime-local],
+    .bulk-field select {
+      padding: 9px 10px;
+      border: 1px solid #d1d5db;
+      border-radius: 8px;
+      background: #fff;
+      font-size: 0.9rem;
+      font-family: inherit;
+    }
+    .bulk-hint { color: #6b7280; font-size: 0.75rem; }
+    .bulk-preview {
+      margin-top: 8px;
+      padding: 14px;
+      background: #f9fafb;
+      border: 1px solid #e5e7eb;
+      border-radius: 10px;
+    }
+    .bulk-preview-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 10px;
+    }
+    .bulk-apply-btn {
+      padding: 9px 18px;
+      background: #111827;
+      color: #fff;
+      border: none;
+      border-radius: 8px;
+      font-weight: 700;
+      font-size: 0.9rem;
+      cursor: pointer;
+    }
+    .bulk-apply-btn:disabled { opacity: 0.45; cursor: not-allowed; }
+    .bulk-apply-btn:hover:not(:disabled) { opacity: 0.9; }
+    .bulk-preview-list {
+      list-style: none;
+      padding: 0;
+      margin: 0;
+      max-height: 180px;
+      overflow-y: auto;
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+      gap: 6px;
+      font-size: 0.82rem;
+      font-variant-numeric: tabular-nums;
+    }
+    .bulk-preview-list li {
+      padding: 4px 8px;
+      background: #fff;
+      border: 1px solid #e5e7eb;
+      border-radius: 6px;
+      color: #374151;
+    }
+    .bulk-results {
+      margin-top: 14px;
+      padding: 14px;
+      background: #f9fafb;
+      border: 1px solid #e5e7eb;
+      border-radius: 10px;
+      font-size: 0.85rem;
+    }
+    .bulk-summary { display: flex; gap: 14px; flex-wrap: wrap; margin-bottom: 10px; font-weight: 600; }
+    .bulk-summary .b-up { color: #16a34a; }
+    .bulk-summary .b-sk { color: #6b7280; }
+    .bulk-summary .b-nf { color: #ea580c; }
+    .bulk-summary .b-er { color: #dc2626; }
+    .bulk-results-list {
+      list-style: none;
+      padding: 0;
+      margin: 0;
+      max-height: 240px;
+      overflow-y: auto;
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+      gap: 4px;
+      font-size: 0.78rem;
+    }
+    .bulk-results-list li {
+      padding: 3px 8px;
+      background: #fff;
+      border: 1px solid #e5e7eb;
+      border-radius: 6px;
+    }
+    .bulk-results-list li.r-updated { border-color: #86efac; background: #f0fdf4; }
+    .bulk-results-list li.r-skipped { color: #6b7280; }
+    .bulk-results-list li.r-not_found { border-color: #fed7aa; background: #fff7ed; color: #9a3412; }
+    .bulk-results-list li.r-error { border-color: #fecaca; background: #fef2f2; color: #991b1b; }
+    @media (max-width: 700px) {
+      .bulk-form { grid-template-columns: 1fr; }
+    }
   </style>
 </head>
 <body>
@@ -133,6 +245,46 @@
       </button>
     </header>
     <div id="content" class="loading"><span class="spinner"></span>&nbsp;Loading current statuses…</div>
+
+    <section class="bulk-card">
+      <header class="bulk-head">
+        <div>
+          <h2>Bulk assign machine + setup time</h2>
+          <p class="sub">Upload a CSV (e.g. an EasyStack download log). Orders are auto-detected from filenames (DTFN…). Already-stamped orders are skipped.</p>
+        </div>
+      </header>
+
+      <div class="bulk-form">
+        <label class="bulk-field">
+          <span class="bulk-label">CSV file</span>
+          <input id="bulkFile" type="file" accept=".csv,text/csv" />
+        </label>
+
+        <label class="bulk-field">
+          <span class="bulk-label">Machine</span>
+          <select id="bulkMachine">
+            <option value="A">Machine A</option>
+            <option value="B">Machine B</option>
+          </select>
+        </label>
+
+        <label class="bulk-field">
+          <span class="bulk-label">Setup time</span>
+          <input id="bulkSetupAt" type="datetime-local" />
+          <small id="bulkSetupHint" class="bulk-hint">Auto-detected from the CSV path will appear here.</small>
+        </label>
+      </div>
+
+      <div class="bulk-preview" id="bulkPreview" style="display:none;">
+        <div class="bulk-preview-head">
+          <strong id="bulkPreviewCount">0 orders detected</strong>
+          <button id="bulkApply" class="bulk-apply-btn" disabled>Apply to all</button>
+        </div>
+        <ul id="bulkPreviewList" class="bulk-preview-list"></ul>
+      </div>
+
+      <div id="bulkResults" class="bulk-results" style="display:none;"></div>
+    </section>
   </div>
   <div id="toast" class="toast"></div>
 
@@ -383,6 +535,128 @@
     }
 
     document.getElementById('refreshBtn').addEventListener('click', loadStatuses);
+
+    // ─── Bulk CSV assign ─────────────────────────────────────────────────
+    (function setupBulk() {
+      const fileInput = document.getElementById('bulkFile');
+      const machineSel = document.getElementById('bulkMachine');
+      const setupAtInput = document.getElementById('bulkSetupAt');
+      const setupHint = document.getElementById('bulkSetupHint');
+      const previewEl = document.getElementById('bulkPreview');
+      const previewCount = document.getElementById('bulkPreviewCount');
+      const previewList = document.getElementById('bulkPreviewList');
+      const applyBtn = document.getElementById('bulkApply');
+      const resultsEl = document.getElementById('bulkResults');
+      if (!fileInput) return;
+
+      let detectedOrders = [];
+
+      function nowLocal() {
+        const d = new Date();
+        const pad = n => String(n).padStart(2, '0');
+        return d.getFullYear()+'-'+pad(d.getMonth()+1)+'-'+pad(d.getDate())+'T'+pad(d.getHours())+':'+pad(d.getMinutes());
+      }
+      setupAtInput.value = nowLocal();
+
+      function parseCsvForOrders(text) {
+        const orders = new Set();
+        const orderRe = /DTFN\d+/gi;
+        let m;
+        while ((m = orderRe.exec(text)) !== null) orders.add(m[0].toUpperCase());
+        let detectedTime = null;
+        const tm = text.match(/run-(\d{4})(\d{2})(\d{2})-(\d{2})(\d{2})(\d{2})/i);
+        if (tm) {
+          const [_, y, mo, d, h, mi, s] = tm;
+          detectedTime = new Date(y+'-'+mo+'-'+d+'T'+h+':'+mi+':'+s);
+        }
+        return { orders: Array.from(orders), detectedTime };
+      }
+
+      fileInput.addEventListener('change', async () => {
+        resultsEl.style.display = 'none';
+        applyBtn.disabled = true;
+        detectedOrders = [];
+        if (!fileInput.files || !fileInput.files[0]) {
+          previewEl.style.display = 'none';
+          return;
+        }
+        const text = await fileInput.files[0].text();
+        const { orders, detectedTime } = parseCsvForOrders(text);
+        detectedOrders = orders;
+        if (detectedTime && !isNaN(detectedTime)) {
+          const pad = n => String(n).padStart(2, '0');
+          setupAtInput.value = detectedTime.getFullYear()+'-'+pad(detectedTime.getMonth()+1)+'-'+pad(detectedTime.getDate())+'T'+pad(detectedTime.getHours())+':'+pad(detectedTime.getMinutes());
+          setupHint.textContent = 'Auto-detected from CSV (' + detectedTime.toLocaleString('en-GB') + '). Edit if needed.';
+        } else {
+          setupHint.textContent = 'No run-timestamp found in CSV — defaulted to now. Edit if needed.';
+        }
+        previewCount.textContent = orders.length + ' order' + (orders.length === 1 ? '' : 's') + ' detected';
+        previewList.innerHTML = '';
+        orders.forEach(o => {
+          const li = document.createElement('li');
+          li.textContent = o;
+          previewList.appendChild(li);
+        });
+        previewEl.style.display = orders.length ? 'block' : 'none';
+        applyBtn.disabled = orders.length === 0;
+        if (!orders.length) toast('No DTFN order numbers found in the CSV.', true);
+      });
+
+      applyBtn.addEventListener('click', async () => {
+        if (!detectedOrders.length) return;
+        const machine = machineSel.value;
+        let setupAtIso = null;
+        if (setupAtInput.value) {
+          const d = new Date(setupAtInput.value);
+          if (!isNaN(d)) setupAtIso = d.toISOString();
+        }
+        applyBtn.disabled = true;
+        applyBtn.textContent = 'Applying…';
+        resultsEl.style.display = 'none';
+        try {
+          const resp = await fetch('/api/bulk-assign', {
+            method: 'POST',
+            headers: authHeaders({ 'Content-Type': 'application/json' }),
+            body: JSON.stringify({ orders: detectedOrders, machine, setupAt: setupAtIso }),
+          });
+          const data = await resp.json();
+          if (!resp.ok) throw new Error(data.error || 'Bulk assign failed');
+          renderResults(data);
+          toast('Bulk: ' + data.summary.updated + ' updated, ' + data.summary.skipped + ' skipped, ' + data.summary.not_found + ' not found, ' + data.summary.errors + ' errors');
+          loadStatuses();
+        } catch (err) {
+          toast(err.message, true);
+        } finally {
+          applyBtn.disabled = false;
+          applyBtn.textContent = 'Apply to all';
+        }
+      });
+
+      function renderResults(data) {
+        resultsEl.innerHTML = '';
+        const sum = document.createElement('div');
+        sum.className = 'bulk-summary';
+        sum.innerHTML =
+          '<span class="b-up">✔ '+data.summary.updated+' updated</span>'+
+          '<span class="b-sk">⏭ '+data.summary.skipped+' skipped</span>'+
+          '<span class="b-nf">✗ '+data.summary.not_found+' not found</span>'+
+          '<span class="b-er">⚠ '+data.summary.errors+' errors</span>';
+        resultsEl.appendChild(sum);
+        const ul = document.createElement('ul');
+        ul.className = 'bulk-results-list';
+        data.results.forEach(r => {
+          const li = document.createElement('li');
+          li.className = 'r-' + r.status;
+          const sym = r.status === 'updated' ? '✔' : r.status === 'skipped' ? '⏭' : r.status === 'not_found' ? '✗' : '⚠';
+          li.textContent = sym + ' ' + r.order + (r.reason ? ' — ' + r.reason : '');
+          li.title = JSON.stringify(r);
+          ul.appendChild(li);
+        });
+        resultsEl.appendChild(ul);
+        resultsEl.style.display = 'block';
+      }
+    })();
+
     loadStatuses();
   </script>
 </body>
