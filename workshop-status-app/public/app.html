@@ -371,9 +371,10 @@
         let capacityHtml = '';
         if (dept.capacity) {
           const total = Number(data.dtf_capacity_total?.value) || 0;
-          const used  = Number(data.dtf_capacity_used?.value) || 0;
-          const pct = total > 0 ? Math.min(100, Math.round((used / total) * 100)) : 0;
-          const widthPct = total > 0 ? Math.min(100, (used / total) * 100) : 0;
+          const usedRaw = Number(data.dtf_capacity_used?.value) || 0;
+          const used = Math.ceil(usedRaw); // Round up to nearest whole metre for display
+          const pct = total > 0 ? Math.min(100, Math.round((usedRaw / total) * 100)) : 0;
+          const widthPct = total > 0 ? Math.min(100, (usedRaw / total) * 100) : 0;
           capacityHtml = `
             <div class="capacity-section">
               <div class="capacity-head">
@@ -423,7 +424,7 @@
                       ${m.online ? 'Online' : 'Offline'}
                     </button>
                   </div>
-                  <div class="machine-q">${m.queue.toFixed(2)}m setup</div>
+                  <div class="machine-q">${Math.ceil(m.queue)}m setup</div>
                 </div>
               `).join('')}
             </div>
@@ -653,11 +654,4 @@
           ul.appendChild(li);
         });
         resultsEl.appendChild(ul);
-        resultsEl.style.display = 'block';
-      }
-    })();
-
-    loadStatuses();
-  </script>
-</body>
-</html>
+        resu

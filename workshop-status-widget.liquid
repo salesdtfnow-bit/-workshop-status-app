@@ -396,8 +396,8 @@
           if dtf_pct_clamped > 100
             assign dtf_pct_clamped = 100
           endif
-          assign dtf_used_int = dtf_cap_used | round: 0
-          assign dtf_total_int = dtf_cap_total | round: 0
+          assign dtf_used_int = dtf_cap_used | ceil
+          assign dtf_total_int = dtf_cap_total | ceil
         %}
         <div class="ww-tile ww-s-{{ dcl }}">
           <div class="ww-tile-head">

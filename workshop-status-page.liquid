@@ -749,7 +749,7 @@
           <div class="ws-cap">
             <div class="ws-cap-head">
               <span class="ws-cap-label">Daily capacity</span>
-              <span class="ws-cap-figs">{{ dtf_cap_used }}m / {{ dtf_cap_total }}m · {{ dtf_cap_pct | floor }}% full</span>
+              <span class="ws-cap-figs">{{ dtf_cap_used | ceil }}m / {{ dtf_cap_total | ceil }}m · {{ dtf_cap_pct | floor }}% full</span>
             </div>
             <div class="ws-cap-bar"><div class="ws-cap-fill ws-cap-{{ dtf_cap_color }}" style="width:{{ dtf_cap_pct_clamped }}%"></div></div>
             {% if dtf_dispatch_msg != blank %}
@@ -777,7 +777,7 @@
               <span class="ws-machine-dot"></span>
               <span class="ws-machine-state">{% if ma_is_on %}Online{% else %}Offline{% endif %}</span>
             </div>
-            <div class="ws-machine-q">{{ machine_a_queue }}m setup</div>
+            <div class="ws-machine-q">{{ machine_a_queue | ceil }}m setup</div>
           </div>
           <div class="ws-machine{% if mb_is_on %} on{% else %} off{% endif %}">
             <div class="ws-machine-head">
@@ -785,7 +785,7 @@
               <span class="ws-machine-dot"></span>
               <span class="ws-machine-state">{% if mb_is_on %}Online{% else %}Offline{% endif %}</span>
             </div>
-            <div class="ws-machine-q">{{ machine_b_queue }}m setup</div>
+            <div class="ws-machine-q">{{ machine_b_queue | ceil }}m setup</div>
           </div>
         </div>
 
