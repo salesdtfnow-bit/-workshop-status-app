@@ -291,8 +291,10 @@ app.get('/api/statuses', requireAuth, async (_req, res) => {
           dtf_capacity_used: metafield(namespace: "dtfcapacity", key: "used") { value }
           machine_a_online: metafield(namespace: "dtfcapacity", key: "machine_a_online") { value }
           machine_b_online: metafield(namespace: "dtfcapacity", key: "machine_b_online") { value }
+          machine_c_online: metafield(namespace: "dtfcapacity", key: "machine_c_online") { value }
           machine_a_queue: metafield(namespace: "dtfcapacity", key: "machine_a_queue") { value }
           machine_b_queue: metafield(namespace: "dtfcapacity", key: "machine_b_queue") { value }
+          machine_c_queue: metafield(namespace: "dtfcapacity", key: "machine_c_queue") { value }
         }
       }
     `;
@@ -418,18 +420,20 @@ app.post('/api/capacity', requireAuth, async (req, res) => {
   }
 });
 
-// ─── API: toggle Machine A / B online state ───────────────────────────────
+// ─── API: toggle Machine A / B / C online state ───────────────────────────
+const VALID_MACHINES = ['A', 'B', 'C'];
+
 app.post('/api/machine', requireAuth, async (req, res) => {
   try {
     const { machine, online } = req.body || {};
-    if (machine !== 'A' && machine !== 'B') {
-      return res.status(400).json({ error: 'machine must be "A" or "B"' });
+    if (!VALID_MACHINES.includes(machine)) {
+      return res.status(400).json({ error: 'machine must be one of: ' + VALID_MACHINES.join(', ') });
     }
     if (typeof online !== 'boolean') {
       return res.status(400).json({ error: 'online must be a boolean' });
     }
     const shopGid = await getShopGid();
-    const key = machine === 'A' ? 'machine_a_online' : 'machine_b_online';
+    const key = `machine_${machine.toLowerCase()}_online`;
     const mutation = `
       mutation SetOnline($metafields: [MetafieldsSetInput!]!) {
         metafieldsSet(metafields: $metafields) {
@@ -460,7 +464,7 @@ app.post('/api/machine', requireAuth, async (req, res) => {
 // GET /api/track?order=1234 → returns { found, name, machine, setupAt, fulfillmentStatus, displayFinancialStatus }
 // No auth — designed for the storefront tracker form. Only exposes setup info.
 // ─── API: bulk-assign machine + setup time from a CSV upload ──────────────
-// Body: { orders: ["DTFN26807", ...], machine: "A"|"B", setupAt: ISO string }
+// Body: { orders: ["DTFN26807", ...], machine: "A"|"B"|"C", setupAt: ISO string }
 // For each order, skip if setup_at is already stamped, else set
 // custom.machine + custom.setup_at + custom.last_commented_machine and
 // post a Timeline comment. Returns per-order status.
@@ -471,8 +475,8 @@ app.post('/api/bulk-assign', requireAuth, async (req, res) => {
       return res.status(400).json({ error: 'orders must be a non-empty array' });
     }
     const M = String(machine || '').toUpperCase();
-    if (M !== 'A' && M !== 'B') {
-      return res.status(400).json({ error: 'machine must be "A" or "B"' });
+    if (!VALID_MACHINES.includes(M)) {
+      return res.status(400).json({ error: 'machine must be one of: ' + VALID_MACHINES.join(', ') });
     }
     const setupIso = setupAt && !isNaN(new Date(setupAt))
       ? new Date(setupAt).toISOString()
@@ -646,12 +650,11 @@ async function recalculateMachineQueues() {
   `;
   const data = await shopifyGraphQL(query);
   const edges = data.data?.orders?.edges || [];
-  const totals = { A: 0, B: 0 };
+  const totals = { A: 0, B: 0, C: 0 };
   for (const e of edges) {
     const m = (e.node.machine?.value || '').toUpperCase();
     const meters = Number(e.node.queued?.value) || 0;
-    if (m === 'A') totals.A += meters;
-    else if (m === 'B') totals.B += meters;
+    if (VALID_MACHINES.includes(m)) totals[m] += meters;
   }
   const shopGid = await getShopGid();
   const mutation = `
@@ -662,10 +665,13 @@ async function recalculateMachineQueues() {
     }
   `;
   const variables = {
-    metafields: [
-      { ownerId: shopGid, namespace: 'dtfcapacity', key: 'machine_a_queue', type: 'number_decimal', value: String(Number(totals.A.toFixed(2))) },
-      { ownerId: shopGid, namespace: 'dtfcapacity', key: 'machine_b_queue', type: 'number_decimal', value: String(Number(totals.B.toFixed(2))) },
-    ],
+    metafields: VALID_MACHINES.map(m => ({
+      ownerId: shopGid,
+      namespace: 'dtfcapacity',
+      key: `machine_${m.toLowerCase()}_queue`,
+      type: 'number_decimal',
+      value: String(Number(totals[m].toFixed(2))),
+    })),
   };
   await shopifyGraphQL(mutation, variables);
   return totals;
@@ -735,7 +741,7 @@ async function maybeStampSetupAt(orderGid) {
   console.log(`maybeStampSetupAt ${orderGid} machine=${machine || '(none)'} setupAt=${setupAt ? 'set' : 'empty'} lastCommented=${lastCommented || '(none)'}`);
 
   // Post a comment whenever machine assignment changes (or is set the first time).
-  if ((machine === 'A' || machine === 'B') && machine !== lastCommented) {
+  if (VALID_MACHINES.includes(machine) && machine !== lastCommented) {
     const nowIso = new Date().toISOString();
     const metafields = [];
     // Stamp setup_at only the first time

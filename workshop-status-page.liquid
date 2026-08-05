@@ -72,8 +72,10 @@
   assign dtf_cap_used  = shop.metafields.dtfcapacity.used.value  | default: shop.metafields.dtfcapacity.used  | default: 0 | plus: 0
   assign machine_a_online = shop.metafields.dtfcapacity.machine_a_online.value | default: shop.metafields.dtfcapacity.machine_a_online | default: false
   assign machine_b_online = shop.metafields.dtfcapacity.machine_b_online.value | default: shop.metafields.dtfcapacity.machine_b_online | default: false
+  assign machine_c_online = shop.metafields.dtfcapacity.machine_c_online.value | default: shop.metafields.dtfcapacity.machine_c_online | default: false
   assign machine_a_queue  = shop.metafields.dtfcapacity.machine_a_queue.value  | default: shop.metafields.dtfcapacity.machine_a_queue  | default: 0 | plus: 0
   assign machine_b_queue  = shop.metafields.dtfcapacity.machine_b_queue.value  | default: shop.metafields.dtfcapacity.machine_b_queue  | default: 0 | plus: 0
+  assign machine_c_queue  = shop.metafields.dtfcapacity.machine_c_queue.value  | default: shop.metafields.dtfcapacity.machine_c_queue  | default: 0 | plus: 0
   assign dtf_cap_pct = 0
   assign dtf_cap_pct_clamped = 0
   if dtf_cap_total > 0
@@ -576,7 +578,7 @@
   }
   #WS3-{{ section.id }} .ws-machines {
     display: grid;
-    grid-template-columns: 1fr 1fr;
+    grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
     gap: 10px;
     margin-bottom: 14px;
   }
@@ -762,13 +764,18 @@
           {% liquid
             assign ma_online_str = machine_a_online | downcase
             assign mb_online_str = machine_b_online | downcase
+            assign mc_online_str = machine_c_online | downcase
             assign ma_is_on = false
             assign mb_is_on = false
+            assign mc_is_on = false
             if ma_online_str == 'true'
               assign ma_is_on = true
             endif
             if mb_online_str == 'true'
               assign mb_is_on = true
+            endif
+            if mc_online_str == 'true'
+              assign mc_is_on = true
             endif
           %}
           <div class="ws-machine{% if ma_is_on %} on{% else %} off{% endif %}">
@@ -786,6 +793,14 @@
               <span class="ws-machine-state">{% if mb_is_on %}Online{% else %}Offline{% endif %}</span>
             </div>
             <div class="ws-machine-q">{{ machine_b_queue | ceil }}m setup</div>
+          </div>
+          <div class="ws-machine{% if mc_is_on %} on{% else %} off{% endif %}">
+            <div class="ws-machine-head">
+              <span class="ws-machine-name">Machine C</span>
+              <span class="ws-machine-dot"></span>
+              <span class="ws-machine-state">{% if mc_is_on %}Online{% else %}Offline{% endif %}</span>
+            </div>
+            <div class="ws-machine-q">{{ machine_c_queue | ceil }}m setup</div>
           </div>
         </div>
 

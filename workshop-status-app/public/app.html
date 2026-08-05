@@ -87,7 +87,7 @@
     .input-row input:focus { outline: none; border-color: #2c6ecb; box-shadow: 0 0 0 3px rgba(44,110,203,0.15); }
     .input-row .unit { display: flex; align-items: center; padding: 0 8px; font-size: 12px; color: var(--text-faint); }
     .quick-row { display: flex; gap: 4px; margin-top: 8px; flex-wrap: wrap; }
-    .machines { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 14px; }
+    .machines { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 10px; margin-top: 14px; }
     .machine { padding: 10px 12px; border-radius: 10px; border: 1px solid var(--border); background: #fafbfc; }
     .machine.online { border-color: #bbf7d0; background: #f0fdf4; }
     .machine.offline { border-color: #fecaca; background: #fef2f2; }
@@ -265,6 +265,7 @@
           <select id="bulkMachine">
             <option value="A">Machine A</option>
             <option value="B">Machine B</option>
+            <option value="C">Machine C</option>
           </select>
         </label>
 
@@ -413,6 +414,7 @@
           const machines = [
             { key: 'A', queue: Number(data.machine_a_queue?.value) || 0, online: (data.machine_a_online?.value === 'true') },
             { key: 'B', queue: Number(data.machine_b_queue?.value) || 0, online: (data.machine_b_online?.value === 'true') },
+            { key: 'C', queue: Number(data.machine_c_queue?.value) || 0, online: (data.machine_c_online?.value === 'true') },
           ];
           capacityHtml += `
             <div class="machines">
