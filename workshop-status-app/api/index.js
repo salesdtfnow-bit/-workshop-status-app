@@ -5,9 +5,9 @@ import fs from 'node:fs';
 import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import 'dotenv/config';
- 
+
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
- 
+
 const {
   SHOPIFY_SHOP_DOMAIN,
   SHOPIFY_ACCESS_TOKEN,
@@ -16,17 +16,17 @@ const {
   ADMIN_PASS,
   PORT = 3000,
 } = process.env;
- 
+
 const API_VERSION = '2025-01';
 const GRAPHQL_URL = `https://${SHOPIFY_SHOP_DOMAIN}/admin/api/${API_VERSION}/graphql.json`;
 const OAUTH_SCOPES = 'read_content,write_content,read_metaobjects,write_metaobjects,read_orders,write_orders';
- 
+
 // DTF roll is 56 cm wide. Individual transfer SKUs get tiled onto it; the
 // roll length consumed per unit is (length / units-per-row).
 // Each entry: width is the side placed across the 56 cm roll, length is the
 // side along the roll's length. Orientation chosen to minimise per-unit cost.
 const ROLL_WIDTH_CM = 56;
- 
+
 const DTF_TILED = {
   '5x5-DTF':       { width: 5,    length: 5   },
   '7x7-DTF':       { width: 7,    length: 7   },
@@ -37,11 +37,18 @@ const DTF_TILED = {
   '25x25-DTF':     { width: 25,   length: 25  },
   '25x55-DTF':     { width: 55,   length: 25  },  // 55 fits in 56, 25 along length
   '28x28-DTF':     { width: 28,   length: 28  },
-  'A4-DTF':        { width: 21,   length: 30  },  // 2 fit across (21+21<56), 30 long
-  'A3-DTF':        { width: 42,   length: 30  },  // 1 fits across, 30 long (rotated)
 };
- 
+
+// Fixed-size sheet products, in cm. Keyed by the paper size in the SKU
+// (DTF_A4 / DTF_A3, and the legacy A4-DTF / A3-DTF names).
+const DTF_SHEETS = {
+  A4: { width: 21, length: 30 },   // 2 fit across the 56 cm roll
+  A3: { width: 42, length: 30 },   // 1 fits across
+};
+
 // Gang sheet SKUs are full-width: each unit consumes its full length of roll.
+// Kept only as documentation — DTF_GANG_<n> is now parsed straight from the
+// SKU, so new sizes work without a code change.
 const DTF_GANG_CM = {
   'DTF_GANG_100': 100,
   'DTF_GANG_125': 125,
@@ -49,12 +56,17 @@ const DTF_GANG_CM = {
   'DTF_GANG_175': 175,
   'DTF_GANG_200': 200,
 };
- 
+
+// Case-insensitive lookup for the tiled table above.
+const DTF_TILED_UPPER = Object.fromEntries(
+  Object.entries(DTF_TILED).map(([k, v]) => [k.toUpperCase(), v])
+);
+
 const HTML_TEMPLATE = fs.readFileSync(
   path.join(__dirname, '..', 'public', 'app.html'),
   'utf8'
 );
- 
+
 async function shopifyGraphQL(query, variables = {}) {
   if (!SHOPIFY_SHOP_DOMAIN || !SHOPIFY_ACCESS_TOKEN) {
     throw new Error('Server not configured — missing SHOPIFY_SHOP_DOMAIN or SHOPIFY_ACCESS_TOKEN. Run /install to obtain a token.');
@@ -77,12 +89,12 @@ async function shopifyGraphQL(query, variables = {}) {
     throw new Error(`Shopify returned non-JSON: ${bodyText.slice(0, 200)}`);
   }
 }
- 
+
 async function getShopGid() {
   const data = await shopifyGraphQL(`{ shop { id } }`);
   return data.data?.shop?.id;
 }
- 
+
 const app = express();
 // Capture the raw body so /api/webhooks/orders can verify Shopify's HMAC.
 app.use(express.json({
@@ -90,7 +102,7 @@ app.use(express.json({
     req.rawBody = buf;
   },
 }));
- 
+
 app.use((_req, res, next) => {
   if (SHOPIFY_SHOP_DOMAIN) {
     res.setHeader(
@@ -100,7 +112,7 @@ app.use((_req, res, next) => {
   }
   next();
 });
- 
+
 function requireAuth(req, res, next) {
   if (!ADMIN_PASS) {
     return res.status(500).json({ error: 'Server not configured — missing ADMIN_PASS env var on Vercel' });
@@ -114,7 +126,7 @@ function requireAuth(req, res, next) {
   }
   next();
 }
- 
+
 // ─── OAuth: step 1 — kick off install ─────────────────────────────────────
 app.get('/install', (req, res) => {
   if (!SHOPIFY_API_KEY || !SHOPIFY_API_SECRET || !SHOPIFY_SHOP_DOMAIN) {
@@ -131,14 +143,14 @@ app.get('/install', (req, res) => {
     `&state=${state}`;
   res.redirect(url);
 });
- 
+
 // ─── OAuth: step 2 — exchange code for token, then auto-register webhooks ─
 async function registerOrderWebhooks(shop, accessToken, ourHost) {
   const url = `https://${shop}/admin/api/${API_VERSION}/graphql.json`;
   const callbackUrl = `https://${ourHost}/api/webhooks/orders`;
   const topics = ['ORDERS_PAID', 'ORDERS_FULFILLED', 'ORDERS_CANCELLED', 'ORDERS_UPDATED'];
   const results = [];
- 
+
   const call = async (query, variables) => {
     const r = await fetch(url, {
       method: 'POST',
@@ -147,7 +159,7 @@ async function registerOrderWebhooks(shop, accessToken, ourHost) {
     });
     return r.json();
   };
- 
+
   // Fetch existing subscriptions so we don't create duplicates
   const existingData = await call(`
     {
@@ -163,7 +175,7 @@ async function registerOrderWebhooks(shop, accessToken, ourHost) {
     }
   `);
   const existing = existingData.data?.webhookSubscriptions?.edges || [];
- 
+
   for (const topic of topics) {
     const already = existing.some(e =>
       e.node.topic === topic && e.node.endpoint?.callbackUrl === callbackUrl
@@ -192,7 +204,7 @@ async function registerOrderWebhooks(shop, accessToken, ourHost) {
   }
   return results;
 }
- 
+
 app.get('/auth/callback', async (req, res) => {
   const { shop, code } = req.query;
   if (!shop || !code) {
@@ -212,7 +224,7 @@ app.get('/auth/callback', async (req, res) => {
     if (!json.access_token) {
       return res.status(500).send(`<pre>Token exchange failed:\n${JSON.stringify(json, null, 2)}</pre>`);
     }
- 
+
     // Register order webhooks using the fresh access token (works even before
     // the user has saved the new token to Vercel env vars).
     let webhookResults = [];
@@ -226,7 +238,7 @@ app.get('/auth/callback', async (req, res) => {
       const detail = r.errors ? ' — ' + JSON.stringify(r.errors) : r.error ? ' — ' + r.error : '';
       return `<li style="color:${colour}"><code>${r.topic}</code>: ${r.status}${detail}</li>`;
     }).join('');
- 
+
     res.send(`<!doctype html>
       <html><head><meta charset="utf-8"><title>OAuth complete</title>
       <style>body{font-family:-apple-system,sans-serif;max-width:720px;margin:40px auto;padding:0 20px;line-height:1.6}
@@ -249,7 +261,7 @@ app.get('/auth/callback', async (req, res) => {
     res.status(500).send(`<pre>OAuth error: ${e.message}</pre>`);
   }
 });
- 
+
 // ─── Embedded dashboard ────────────────────────────────────────────────────
 app.get('/', (_req, res) => {
   if (!ADMIN_PASS) {
@@ -272,7 +284,7 @@ app.get('/', (_req, res) => {
   }
   res.send(HTML_TEMPLATE.replace(/\{\{ADMIN_PASS\}\}/g, ADMIN_PASS));
 });
- 
+
 // ─── API: read statuses + capacity ────────────────────────────────────────
 app.get('/api/statuses', requireAuth, async (_req, res) => {
   try {
@@ -305,11 +317,11 @@ app.get('/api/statuses', requireAuth, async (_req, res) => {
     res.status(500).json({ error: e.message });
   }
 });
- 
+
 // ─── API: update a department status ───────────────────────────────────────
 const VALID_DEPARTMENTS = ['overall', 'dtf', 'uv_dtf', 'artwork_setup'];
 const VALID_STATUSES = ['not_busy', 'moderate', 'busy', 'full_capacity'];
- 
+
 app.post('/api/update', requireAuth, async (req, res) => {
   try {
     const { department, status } = req.body;
@@ -347,7 +359,7 @@ app.post('/api/update', requireAuth, async (req, res) => {
     res.status(500).json({ error: e.message });
   }
 });
- 
+
 // ─── API: update DTF capacity (total or used in meters) ───────────────────
 app.post('/api/capacity', requireAuth, async (req, res) => {
   try {
@@ -355,7 +367,7 @@ app.post('/api/capacity', requireAuth, async (req, res) => {
     const metafields = [];
     const shopGid = await getShopGid();
     if (!shopGid) return res.status(500).json({ error: 'Could not load shop ID' });
- 
+
     if (!Number.isFinite(total) && !Number.isFinite(used)) {
       return res.status(400).json({ error: 'Provide at least one of: total, used' });
     }
@@ -365,10 +377,10 @@ app.post('/api/capacity', requireAuth, async (req, res) => {
     if (Number.isFinite(used) && (used < 0 || used > 100000)) {
       return res.status(400).json({ error: 'Invalid used (must be 0–100000)' });
     }
- 
+
     const safeTotal = Number.isFinite(total) ? Math.max(0, Number(total.toFixed(2))) : null;
     const safeUsed = Number.isFinite(used) ? Math.max(0, Number(used.toFixed(2))) : null;
- 
+
     // The status pill is a percentage of the daily capacity total, so work out
     // the values that will be in effect AFTER this save — the ones being sent
     // where present, otherwise the ones already stored.
@@ -379,7 +391,7 @@ app.post('/api/capacity', requireAuth, async (req, res) => {
       if (effectiveTotal === null) effectiveTotal = stored.total;
       if (effectiveUsed === null) effectiveUsed = stored.used;
     }
- 
+
     if (safeTotal !== null) {
       metafields.push({
         ownerId: shopGid,
@@ -398,7 +410,7 @@ app.post('/api/capacity', requireAuth, async (req, res) => {
         value: String(safeUsed),
       });
     }
- 
+
     // Auto-update the DTF status pill to match the new queue percentage.
     // Skipped entirely when no capacity total is set, so a manual status is
     // never overwritten with a guess.
@@ -441,10 +453,10 @@ app.post('/api/capacity', requireAuth, async (req, res) => {
     res.status(500).json({ error: e.message });
   }
 });
- 
+
 // ─── API: toggle Machine A / B / C online state ───────────────────────────
 const VALID_MACHINES = ['A', 'B', 'C'];
- 
+
 app.post('/api/machine', requireAuth, async (req, res) => {
   try {
     const { machine, online } = req.body || {};
@@ -481,7 +493,7 @@ app.post('/api/machine', requireAuth, async (req, res) => {
     res.status(500).json({ error: e.message });
   }
 });
- 
+
 // ─── API: customer-facing order tracker ───────────────────────────────────
 // GET /api/track?order=1234 → returns { found, name, machine, setupAt, fulfillmentStatus, displayFinancialStatus }
 // No auth — designed for the storefront tracker form. Only exposes setup info.
@@ -503,7 +515,7 @@ app.post('/api/bulk-assign', requireAuth, async (req, res) => {
     const setupIso = setupAt && !isNaN(new Date(setupAt))
       ? new Date(setupAt).toISOString()
       : new Date().toISOString();
- 
+
     // Look up each order, sequentially to be gentle on the API.
     const results = [];
     for (const raw of orders) {
@@ -537,13 +549,13 @@ app.post('/api/bulk-assign', requireAuth, async (req, res) => {
           results.push({ order: cleaned, status: 'not_found' });
           continue;
         }
- 
+
         // Skip if already stamped (overwrite policy = skip)
         if (found.setupAt?.value) {
           results.push({ order: cleaned, name: found.name, status: 'skipped', reason: 'already stamped' });
           continue;
         }
- 
+
         // Set metafields
         const setRes = await shopifyGraphQL(`
           mutation($mf: [MetafieldsSetInput!]!) {
@@ -566,7 +578,7 @@ app.post('/api/bulk-assign', requireAuth, async (req, res) => {
           results.push({ order: cleaned, name: found.name, status: 'error', message: JSON.stringify(errs) });
           continue;
         }
- 
+
         // Post timeline comment (best-effort)
         const stamp = new Date(setupIso).toLocaleString('en-GB', {
           timeZone: 'Europe/London',
@@ -578,17 +590,17 @@ app.post('/api/bulk-assign', requireAuth, async (req, res) => {
         } catch (e) {
           console.error('bulk-assign postTimelineComment failed for', cleaned, e.message);
         }
- 
+
         results.push({ order: cleaned, name: found.name, status: 'updated' });
       } catch (e) {
         console.error('bulk-assign error for', cleaned, e);
         results.push({ order: cleaned, status: 'error', message: e.message });
       }
     }
- 
+
     // Re-sync machine queues at the end
     try { await recalculateMachineQueues(); } catch (_) {}
- 
+
     const summary = {
       total: results.length,
       updated:   results.filter(r => r.status === 'updated').length,
@@ -602,7 +614,7 @@ app.post('/api/bulk-assign', requireAuth, async (req, res) => {
     res.status(500).json({ error: e.message });
   }
 });
- 
+
 app.get('/api/track', async (req, res) => {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET');
@@ -653,7 +665,7 @@ app.get('/api/track', async (req, res) => {
     res.status(500).json({ error: 'Lookup failed' });
   }
 });
- 
+
 // ─── Helper: recalculate machine_a/b queues from order metafields ─────────
 // Sums dtf_queued_cm (in metres) for unfulfilled orders grouped by custom.machine.
 async function recalculateMachineQueues() {
@@ -698,7 +710,7 @@ async function recalculateMachineQueues() {
   await shopifyGraphQL(mutation, variables);
   return totals;
 }
- 
+
 // ─── Helper: stamp custom.setup_at when machine assigned but setup_at empty ─
 // ─── Helper: post a comment to the order's Timeline ───────────────────────
 // Tries Shopify Admin GraphQL's commentEventCreate mutation. If that's
@@ -712,7 +724,7 @@ async function postTimelineComment(orderGid, body) {
       }
     }
   `, { subjectId: orderGid, body });
- 
+
   // Surface top-level GraphQL errors (e.g. mutation doesn't exist on this API version)
   if (result.errors?.length) {
     console.error('commentEventCreate GraphQL errors:', JSON.stringify(result.errors));
@@ -726,7 +738,7 @@ async function postTimelineComment(orderGid, body) {
   }
   console.log('Timeline comment posted on', orderGid);
 }
- 
+
 // Fallback: append to Order.note field if commentEventCreate isn't available.
 async function appendOrderNoteFallback(orderGid, line) {
   const data = await shopifyGraphQL(`
@@ -746,7 +758,7 @@ async function appendOrderNoteFallback(orderGid, line) {
   if (errs.length) console.error('appendOrderNoteFallback errors:', JSON.stringify(errs));
   else console.log('Note fallback used on', orderGid);
 }
- 
+
 async function maybeStampSetupAt(orderGid) {
   const data = await shopifyGraphQL(`
     query Check($id: ID!) {
@@ -761,7 +773,7 @@ async function maybeStampSetupAt(orderGid) {
   const setupAt = data.data?.order?.setupAt?.value;
   const lastCommented = (data.data?.order?.lastCommented?.value || '').toUpperCase();
   console.log(`maybeStampSetupAt ${orderGid} machine=${machine || '(none)'} setupAt=${setupAt ? 'set' : 'empty'} lastCommented=${lastCommented || '(none)'}`);
- 
+
   // Post a comment whenever machine assignment changes (or is set the first time).
   if (VALID_MACHINES.includes(machine) && machine !== lastCommented) {
     const nowIso = new Date().toISOString();
@@ -791,7 +803,7 @@ async function maybeStampSetupAt(orderGid) {
         }
       }
     `, { metafields });
- 
+
     // Post timeline comment
     const stamp = new Date().toLocaleString('en-GB', {
       timeZone: 'Europe/London',
@@ -806,7 +818,7 @@ async function maybeStampSetupAt(orderGid) {
     }
   }
 }
- 
+
 // ─── Debug endpoint ────────────────────────────────────────────────────────
 app.get('/api/debug', requireAuth, async (_req, res) => {
   const mask = (s) => {
@@ -833,7 +845,7 @@ app.get('/api/debug', requireAuth, async (_req, res) => {
   }
   res.json(info);
 });
- 
+
 // ─── Webhook: orders/paid + orders/fulfilled + orders/cancelled ───────────
 // Auto-updates dtfcapacity.used based on DTF SKUs in the order.
 // Uses an order-level metafield workshop_status.dtf_queued_cm as an
@@ -853,36 +865,80 @@ function verifyShopifyHmac(req) {
     return false;
   }
 }
- 
-// Per-unit roll length (cm) for a tiled SKU on the 56 cm roll.
-// Fair share = length / (units that fit across the roll width).
-function tiledCmPerUnit(sku) {
-  const dims = DTF_TILED[sku];
-  if (!dims) return 0;
-  const perRow = Math.max(1, Math.floor(ROLL_WIDTH_CM / dims.width));
-  return dims.length / perRow;
+
+// Roll length (cm) consumed by one unit of a piece measuring a x b cm.
+// The piece can be laid either way round on the 56 cm roll; take whichever
+// orientation wastes less roll. Reproduces the hand-tuned DTF_TILED numbers.
+function bestFitCmPerUnit(a, b) {
+  const options = [];
+  if (a > 0 && a <= ROLL_WIDTH_CM) options.push(b / Math.floor(ROLL_WIDTH_CM / a));
+  if (b > 0 && b <= ROLL_WIDTH_CM) options.push(a / Math.floor(ROLL_WIDTH_CM / b));
+  if (!options.length) return 0;   // neither side fits across the roll
+  return Math.min(...options);
 }
- 
+
+// Roll length (cm) consumed by ONE unit of the given SKU, or 0 if the SKU
+// doesn't consume DTF roll at all (services, UV-DTF, sublimation, samples).
+//
+// Parsed from the SKU rather than looked up in a fixed list, so renaming or
+// adding a size in Shopify no longer silently stops the queue from updating.
+// Recognised shapes (case-insensitive, optional "_RO" rush-order suffix):
+//   DTF_GANG_150      full-width gang sheet, 150 cm of roll
+//   DTF_A4 / DTF_A3   fixed sheet sizes (legacy A4-DTF / A3-DTF also work)
+//   25x55-DTF         individual transfer, tiled across the roll
+function skuToCm(rawSku) {
+  let sku = String(rawSku || '').trim().toUpperCase();
+  if (!sku) return 0;
+
+  // UV-DTF is a different printer and a different department — never counts
+  // toward the DTF roll queue. Checked first so nothing below can match it.
+  if (sku.includes('UVDTF') || sku.includes('UV-DTF') || sku.includes('UV_DTF')) return 0;
+
+  // "_RO" / "-RO" = rush order: same physical product, quicker turnaround.
+  sku = sku.replace(/[_-]RO$/, '');
+
+  // Gang sheets: full roll width, length given in the SKU.
+  const gang = sku.match(/^DTF[_-]GANG[_-](\d+(?:\.\d+)?)$/);
+  if (gang) return Number(gang[1]);
+
+  // Fixed sheet sizes: DTF_A4 / DTF_A3, or the legacy A4-DTF / A3-DTF.
+  const sheet = sku.match(/^DTF[_-](A\d)$/) || sku.match(/^(A\d)[_-]DTF$/);
+  if (sheet) {
+    const dims = DTF_SHEETS[sheet[1]];
+    if (dims) return bestFitCmPerUnit(dims.width, dims.length);
+    console.warn(`skuToCm: unknown sheet size in SKU "${rawSku}" — not counted`);
+    return 0;
+  }
+
+  // Individual transfers, e.g. 25x55-DTF. Use the explicit table when present,
+  // otherwise read the two dimensions straight out of the SKU.
+  const known = DTF_TILED_UPPER[sku];
+  if (known) return bestFitCmPerUnit(known.width, known.length);
+
+  const parsed = sku.match(/^(\d+(?:\.\d+)?)X(\d+(?:\.\d+)?)[_-]DTF$/);
+  if (parsed) return bestFitCmPerUnit(Number(parsed[1]), Number(parsed[2]));
+
+  // Anything else consumes no roll. Log DTF-looking SKUs so a future rename
+  // shows up in the Vercel logs instead of silently reading as zero.
+  if (sku.includes('DTF') && !sku.includes('SMPL') && !sku.includes('SAMPLE')) {
+    console.warn(`skuToCm: unrecognised DTF SKU "${rawSku}" — counted as 0 m`);
+  }
+  return 0;
+}
+
 // Returns the total metres of DTF roll consumed by these line items.
-// - Gang sheets (DTF_GANG_*): full length per unit.
-// - Tiled SKUs (DTF_TILED): fair-share length per unit on the 56 cm roll.
 // IMPORTANT: dtfcapacity.total and dtfcapacity.used metafields are in METRES,
 // so this must return metres for the webhook adds/subtracts to be correct.
 function lineItemsToMeters(lineItems = []) {
   let totalCm = 0;
   for (const item of lineItems) {
-    const sku = item.sku;
     const qty = Number(item.quantity) || 0;
     if (qty <= 0) continue;
-    if (DTF_GANG_CM[sku]) {
-      totalCm += DTF_GANG_CM[sku] * qty;
-    } else if (DTF_TILED[sku]) {
-      totalCm += tiledCmPerUnit(sku) * qty;
-    }
+    totalCm += skuToCm(item.sku) * qty;
   }
   return Math.round(totalCm) / 100;
 }
- 
+
 // NOTE: the metafield is named `dtf_queued_cm` for back-compat with the
 // existing Order metafield definition (custom.dtf_queued_cm), but the value
 // is actually stored in METRES to match the dtfcapacity.used unit.
@@ -897,7 +953,7 @@ async function getOrderQueuedMeters(orderGid) {
   const v = data.data?.order?.metafield?.value;
   return v ? Number(v) : 0;
 }
- 
+
 async function setOrderQueuedMeters(orderGid, meters) {
   const mutation = `
     mutation SetOrderQueued($metafields: [MetafieldsSetInput!]!) {
@@ -919,7 +975,7 @@ async function setOrderQueuedMeters(orderGid, meters) {
   const errors = data.data?.metafieldsSet?.userErrors || [];
   if (errors.length) throw new Error('setOrderQueuedMeters errors: ' + JSON.stringify(errors));
 }
- 
+
 // Reads both capacity metafields in one call. Both values are in METRES.
 async function readCapacity() {
   const data = await shopifyGraphQL(`
@@ -936,7 +992,7 @@ async function readCapacity() {
     used: Number(shop.used?.value || 0),
   };
 }
- 
+
 // Derives the DTF status pill from how full the workshop is as a PERCENTAGE of
 // the configured daily capacity (dtfcapacity.total), NOT from absolute metres.
 // Thresholds match the capacity bar colours used in the admin app and theme:
@@ -954,7 +1010,7 @@ function queueToStatus(usedMeters, totalMeters) {
   if (pct < 100) return 'busy';
   return 'full_capacity';
 }
- 
+
 async function writeCapacityUsed(newUsed, totalMeters) {
   const shopGid = await getShopGid();
   const total = Number.isFinite(Number(totalMeters))
@@ -1002,7 +1058,7 @@ async function writeCapacityUsed(newUsed, totalMeters) {
   const errors = data.data?.metafieldsSet?.userErrors || [];
   if (errors.length) throw new Error('writeCapacityUsed errors: ' + JSON.stringify(errors));
 }
- 
+
 app.post('/api/webhooks/orders', async (req, res) => {
   // Always 200 quickly so Shopify doesn't retry — handle errors silently.
   if (!verifyShopifyHmac(req)) {
@@ -1013,19 +1069,19 @@ app.post('/api/webhooks/orders', async (req, res) => {
   const order = req.body;
   const orderId = order?.id;
   if (!orderId) return res.status(200).send('no order id');
- 
+
   const orderGid = `gid://shopify/Order/${orderId}`;
   try {
     if (topic === 'orders/paid') {
       const meters = lineItemsToMeters(order.line_items);
       if (meters <= 0) return res.status(200).send('no dtf');
- 
+
       const alreadyQueued = await getOrderQueuedMeters(orderGid);
       if (alreadyQueued > 0) {
         console.log(`Order ${orderId} already queued at ${alreadyQueued}m — skipping`);
         return res.status(200).send('already queued');
       }
- 
+
       const { used: current, total } = await readCapacity();
       await writeCapacityUsed(current + meters, total);
       await setOrderQueuedMeters(orderGid, meters);
@@ -1059,7 +1115,7 @@ app.post('/api/webhooks/orders', async (req, res) => {
     res.status(200).send('handled with errors');
   }
 });
- 
+
 app.get('/healthz', (_req, res) => res.send('ok'));
- 
+
 export default app;
