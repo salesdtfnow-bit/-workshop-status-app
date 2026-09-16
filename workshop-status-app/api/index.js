@@ -882,8 +882,10 @@ function bestFitCmPerUnit(a, b) {
 //
 // Parsed from the SKU rather than looked up in a fixed list, so renaming or
 // adding a size in Shopify no longer silently stops the queue from updating.
-// Recognised shapes (case-insensitive, optional "_RO" rush-order suffix):
+// Recognised shapes (case-insensitive; "_RO" rush-order and "_CUT" cut-service
+// suffixes are stripped first, in any order — they don't change the print):
 //   DTF_GANG_150      full-width gang sheet, 150 cm of roll
+//   ECO_GANG_150      same, any <PREFIX>_GANG_<n> film (ECO paper-base, etc.)
 //   DTF_A4 / DTF_A3   fixed sheet sizes (legacy A4-DTF / A3-DTF also work)
 //   25x55-DTF         individual transfer, tiled across the roll
 function skuToCm(rawSku) {
@@ -894,11 +896,20 @@ function skuToCm(rawSku) {
   // toward the DTF roll queue. Checked first so nothing below can match it.
   if (sku.includes('UVDTF') || sku.includes('UV-DTF') || sku.includes('UV_DTF')) return 0;
 
-  // "_RO" / "-RO" = rush order: same physical product, quicker turnaround.
-  sku = sku.replace(/[_-]RO$/, '');
+  // Service suffixes that don't change what gets printed:
+  //   _RO  = rush order (quicker turnaround)
+  //   _CUT = we cut the sheet for them
+  // Stripped repeatedly so combinations like DTF_GANG_100_CUT_RO also resolve.
+  let stripped;
+  do {
+    stripped = sku;
+    sku = sku.replace(/[_-](RO|CUT)$/, '');
+  } while (sku !== stripped);
 
-  // Gang sheets: full roll width, length given in the SKU.
-  const gang = sku.match(/^DTF[_-]GANG[_-](\d+(?:\.\d+)?)$/);
+  // Gang sheets: full roll width, length in cm given in the SKU. The prefix is
+  // the film type (DTF, ECO, ...) — any of them consumes the same roll length,
+  // so match on the _GANG_<n> shape rather than on one hardcoded prefix.
+  const gang = sku.match(/^[A-Z0-9]+[_-]GANG[_-](\d+(?:\.\d+)?)$/);
   if (gang) return Number(gang[1]);
 
   // Fixed sheet sizes: DTF_A4 / DTF_A3, or the legacy A4-DTF / A3-DTF.
@@ -918,10 +929,12 @@ function skuToCm(rawSku) {
   const parsed = sku.match(/^(\d+(?:\.\d+)?)X(\d+(?:\.\d+)?)[_-]DTF$/);
   if (parsed) return bestFitCmPerUnit(Number(parsed[1]), Number(parsed[2]));
 
-  // Anything else consumes no roll. Log DTF-looking SKUs so a future rename
-  // shows up in the Vercel logs instead of silently reading as zero.
-  if (sku.includes('DTF') && !sku.includes('SMPL') && !sku.includes('SAMPLE')) {
-    console.warn(`skuToCm: unrecognised DTF SKU "${rawSku}" — counted as 0 m`);
+  // Anything else consumes no roll. Log SKUs that look like they should have
+  // matched, so a future rename or new line shows up in the Vercel logs
+  // instead of silently reading as zero.
+  const looksPrintable = sku.includes('DTF') || sku.includes('GANG');
+  if (looksPrintable && !sku.includes('SMPL') && !sku.includes('SAMPLE')) {
+    console.warn(`skuToCm: unrecognised printable SKU "${rawSku}" — counted as 0 m`);
   }
   return 0;
 }
@@ -1011,6 +1024,55 @@ function queueToStatus(usedMeters, totalMeters) {
   return 'full_capacity';
 }
 
+// ─── Source of truth: recompute the queue from the orders still outstanding ─
+// dtfcapacity.used used to be a running total (+= on paid, -= on fulfilled).
+// Any missed webhook, hand-typed value or order archived without being
+// fulfilled left a permanent error that could never correct itself — it drifted
+// 140 m out by Sept 2026. We now MEASURE instead of counting: every webhook
+// re-derives the figure from the orders that are genuinely open, so a bad
+// reading fixes itself on the very next order.
+const OPEN_ORDERS_QUERY = 'fulfillment_status:unfulfilled AND status:open';
+
+// Pages through every open, unfulfilled, non-cancelled order and returns the
+// total metres of DTF roll they represent, computed from their line items.
+async function sumOpenOrderMeters() {
+  let after = null;
+  let total = 0;
+  let orders = 0;
+  for (let page = 0; page < 40; page++) {   // hard cap: 40 x 50 = 2000 orders
+    const data = await shopifyGraphQL(`
+      query OpenOrders($q: String!, $after: String) {
+        orders(first: 50, after: $after, query: $q) {
+          pageInfo { hasNextPage endCursor }
+          edges { node { id lineItems(first: 50) { edges { node { sku quantity } } } } }
+        }
+      }
+    `, { q: OPEN_ORDERS_QUERY, after });
+    const conn = data.data?.orders;
+    if (!conn) break;
+    for (const edge of conn.edges || []) {
+      const items = (edge.node.lineItems?.edges || []).map(e => e.node);
+      total += lineItemsToMeters(items);
+      orders++;
+    }
+    if (!conn.pageInfo?.hasNextPage) break;
+    after = conn.pageInfo.endCursor;
+  }
+  return { meters: Math.round(total * 100) / 100, orders };
+}
+
+// Recomputes and stores dtfcapacity.used (plus the status pill).
+async function recomputeCapacityUsed() {
+  const { meters, orders } = await sumOpenOrderMeters();
+  const { used: before, total } = await readCapacity();
+  await writeCapacityUsed(meters, total);
+  const drift = Math.round((before - meters) * 100) / 100;
+  if (Math.abs(drift) >= 0.01) {
+    console.log(`recomputeCapacityUsed: ${before}m → ${meters}m across ${orders} open orders (corrected ${drift}m of drift)`);
+  }
+  return meters;
+}
+
 async function writeCapacityUsed(newUsed, totalMeters) {
   const shopGid = await getShopGid();
   const total = Number.isFinite(Number(totalMeters))
@@ -1082,30 +1144,32 @@ app.post('/api/webhooks/orders', async (req, res) => {
         return res.status(200).send('already queued');
       }
 
-      const { used: current, total } = await readCapacity();
-      await writeCapacityUsed(current + meters, total);
+      // Stamp the order first so the recompute below and the machine queues
+      // both see it, then re-derive the whole queue from open orders.
       await setOrderQueuedMeters(orderGid, meters);
+      const nowUsed = await recomputeCapacityUsed();
       await recalculateMachineQueues();
+      console.log(`Order ${orderId} paid → +${meters}m (queue now ${nowUsed}m)`);
     } else if (topic === 'orders/fulfilled' || topic === 'orders/cancelled') {
+      // The order has left the queue. Clear its stamp, then recompute — no
+      // subtraction to get wrong, and orders that never had a stamp (paid
+      // before a fix, or bulk-imported) now drop out correctly too.
       const queuedMeters = await getOrderQueuedMeters(orderGid);
-      if (queuedMeters <= 0) {
-        console.log(`Order ${orderId} ${topic} but no queued meters — skipping`);
-        await recalculateMachineQueues();
-        return res.status(200).send('not queued');
-      }
-      const { used: current, total } = await readCapacity();
-      await writeCapacityUsed(Math.max(0, current - queuedMeters), total);
-      await setOrderQueuedMeters(orderGid, 0);
+      if (queuedMeters > 0) await setOrderQueuedMeters(orderGid, 0);
+      const nowUsed = await recomputeCapacityUsed();
       await recalculateMachineQueues();
-      console.log(`Order ${orderId} ${topic} → -${queuedMeters}m (queue ${current}→${Math.max(0, current - queuedMeters)})`);
+      console.log(`Order ${orderId} ${topic} → released ${queuedMeters}m (queue now ${nowUsed}m)`);
     } else if (topic === 'orders/updated') {
+      // Line items can change after payment (edits, partial refunds), so the
+      // queue is re-derived here too.
+      const nowUsed = await recomputeCapacityUsed();
       await recalculateMachineQueues();
       try {
         await maybeStampSetupAt(orderGid);
       } catch (e) {
         console.error('maybeStampSetupAt failed for', orderGid, e.message);
       }
-      console.log(`Order ${orderId} updated → recalculated machine queues`);
+      console.log(`Order ${orderId} updated → queue now ${nowUsed}m`);
     } else {
       console.log(`Webhook topic ${topic} not handled`);
     }
