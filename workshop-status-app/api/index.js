@@ -62,6 +62,21 @@ const DTF_TILED_UPPER = Object.fromEntries(
   Object.entries(DTF_TILED).map(([k, v]) => [k.toUpperCase(), v])
 );
 
+// ─── UV-DTF ───────────────────────────────────────────────────────────────
+// UV-DTF prints on its own printer, on 59 cm wide film, and is tracked
+// completely separately from the DTF rolls above (own metafield namespace,
+// own capacity, own status pill).
+const UV_FILM_WIDTH_CM = 59;
+
+// One UV printer today. Everything downstream is derived from this list, so
+// adding 'UV2' here is the only change needed to show a second machine —
+// never hardcode the machine keys again (that is what froze the DTF queues
+// when Machine D was added).
+// The daily capacity itself lives in the uvcapacity.total shop metafield
+// (seeded at 72 m = 9 m/hour x an 8-hour shift) so it can be changed from the
+// dashboard without a deploy.
+const UV_MACHINES = ['UV'];
+
 const HTML_TEMPLATE = fs.readFileSync(
   path.join(__dirname, '..', 'public', 'app.html'),
   'utf8'
@@ -309,6 +324,10 @@ app.get('/api/statuses', requireAuth, async (_req, res) => {
           machine_b_queue: metafield(namespace: "dtfcapacity", key: "machine_b_queue") { value }
           machine_c_queue: metafield(namespace: "dtfcapacity", key: "machine_c_queue") { value }
           machine_d_queue: metafield(namespace: "dtfcapacity", key: "machine_d_queue") { value }
+          uv_capacity_total: metafield(namespace: "uvcapacity", key: "total") { value }
+          uv_capacity_used: metafield(namespace: "uvcapacity", key: "used") { value }
+          machine_uv_online: metafield(namespace: "uvcapacity", key: "machine_uv_online") { value }
+          machine_uv_queue: metafield(namespace: "uvcapacity", key: "machine_uv_queue") { value }
         }
       }
     `;
@@ -362,10 +381,21 @@ app.post('/api/update', requireAuth, async (req, res) => {
   }
 });
 
-// ─── API: update DTF capacity (total or used in meters) ───────────────────
+// ─── API: update a department's capacity (total or used, in metres) ──────
+// dept defaults to 'dtf' so older clients keep working unchanged.
+const CAPACITY_DEPTS = {
+  dtf:    { namespace: 'dtfcapacity', statusKey: 'dtf' },
+  uv_dtf: { namespace: 'uvcapacity',  statusKey: 'uv_dtf' },
+};
+
 app.post('/api/capacity', requireAuth, async (req, res) => {
   try {
     const { total, used } = req.body;
+    const deptKey = req.body?.dept || 'dtf';
+    const dept = CAPACITY_DEPTS[deptKey];
+    if (!dept) {
+      return res.status(400).json({ error: 'dept must be one of: ' + Object.keys(CAPACITY_DEPTS).join(', ') });
+    }
     const metafields = [];
     const shopGid = await getShopGid();
     if (!shopGid) return res.status(500).json({ error: 'Could not load shop ID' });
@@ -389,15 +419,23 @@ app.post('/api/capacity', requireAuth, async (req, res) => {
     let effectiveTotal = safeTotal;
     let effectiveUsed = safeUsed;
     if (effectiveTotal === null || effectiveUsed === null) {
-      const stored = await readCapacity();
-      if (effectiveTotal === null) effectiveTotal = stored.total;
-      if (effectiveUsed === null) effectiveUsed = stored.used;
+      const stored = await shopifyGraphQL(`
+        query Stored($ns: String!) {
+          shop {
+            total: metafield(namespace: $ns, key: "total") { value }
+            used: metafield(namespace: $ns, key: "used") { value }
+          }
+        }
+      `, { ns: dept.namespace });
+      const shop = stored.data?.shop || {};
+      if (effectiveTotal === null) effectiveTotal = Number(shop.total?.value || 0);
+      if (effectiveUsed === null) effectiveUsed = Number(shop.used?.value || 0);
     }
 
     if (safeTotal !== null) {
       metafields.push({
         ownerId: shopGid,
-        namespace: 'dtfcapacity',
+        namespace: dept.namespace,
         key: 'total',
         type: 'number_decimal',
         value: String(safeTotal),
@@ -406,14 +444,14 @@ app.post('/api/capacity', requireAuth, async (req, res) => {
     if (safeUsed !== null) {
       metafields.push({
         ownerId: shopGid,
-        namespace: 'dtfcapacity',
+        namespace: dept.namespace,
         key: 'used',
         type: 'number_decimal',
         value: String(safeUsed),
       });
     }
 
-    // Auto-update the DTF status pill to match the new queue percentage.
+    // Auto-update the status pill to match the new queue percentage.
     // Skipped entirely when no capacity total is set, so a manual status is
     // never overwritten with a guess.
     const autoStatus = queueToStatus(effectiveUsed, effectiveTotal);
@@ -421,18 +459,18 @@ app.post('/api/capacity', requireAuth, async (req, res) => {
       metafields.push({
         ownerId: shopGid,
         namespace: 'workshop_status',
-        key: 'dtf',
+        key: dept.statusKey,
         type: 'single_line_text_field',
         value: autoStatus,
       });
     } else {
-      console.warn('POST /api/capacity: dtfcapacity.total is 0/unset — leaving workshop_status.dtf unchanged');
+      console.warn(`POST /api/capacity: ${dept.namespace}.total is 0/unset — leaving workshop_status.${dept.statusKey} unchanged`);
     }
-    // Also stamp dtf_updated so storefront timestamp reflects capacity change too
+    // Also stamp the department timestamp so the storefront reflects the change
     metafields.push({
       ownerId: shopGid,
       namespace: 'workshop_status',
-      key: 'dtf_updated',
+      key: `${dept.statusKey}_updated`,
       type: 'date_time',
       value: new Date().toISOString(),
     });
@@ -449,27 +487,40 @@ app.post('/api/capacity', requireAuth, async (req, res) => {
     if (errors.length) {
       return res.status(400).json({ error: 'Shopify rejected the update', details: errors });
     }
-    res.json({ ok: true });
+    res.json({ ok: true, dept: deptKey });
   } catch (e) {
     console.error('POST /api/capacity error:', e);
     res.status(500).json({ error: e.message });
   }
 });
 
-// ─── API: toggle Machine A / B / C online state ───────────────────────────
+// ─── API: toggle a machine's online state ─────────────────────────────────
+// DTF machines live in the dtfcapacity namespace, UV machines in uvcapacity.
 const VALID_MACHINES = ['A', 'B', 'C', 'D'];
+
+// Which namespace a machine key belongs to, or null if it isn't a machine.
+function machineNamespace(machine) {
+  const m = String(machine || '').toUpperCase();
+  if (VALID_MACHINES.includes(m)) return 'dtfcapacity';
+  if (UV_MACHINES.includes(m)) return 'uvcapacity';
+  return null;
+}
 
 app.post('/api/machine', requireAuth, async (req, res) => {
   try {
     const { machine, online } = req.body || {};
-    if (!VALID_MACHINES.includes(machine)) {
-      return res.status(400).json({ error: 'machine must be one of: ' + VALID_MACHINES.join(', ') });
+    const M = String(machine || '').toUpperCase();
+    const namespace = machineNamespace(M);
+    if (!namespace) {
+      return res.status(400).json({
+        error: 'machine must be one of: ' + VALID_MACHINES.concat(UV_MACHINES).join(', '),
+      });
     }
     if (typeof online !== 'boolean') {
       return res.status(400).json({ error: 'online must be a boolean' });
     }
     const shopGid = await getShopGid();
-    const key = `machine_${machine.toLowerCase()}_online`;
+    const key = `machine_${M.toLowerCase()}_online`;
     const mutation = `
       mutation SetOnline($metafields: [MetafieldsSetInput!]!) {
         metafieldsSet(metafields: $metafields) {
@@ -480,7 +531,7 @@ app.post('/api/machine', requireAuth, async (req, res) => {
     const variables = {
       metafields: [{
         ownerId: shopGid,
-        namespace: 'dtfcapacity',
+        namespace,
         key,
         type: 'boolean',
         value: online ? 'true' : 'false',
@@ -489,7 +540,7 @@ app.post('/api/machine', requireAuth, async (req, res) => {
     const data = await shopifyGraphQL(mutation, variables);
     const errors = data.data?.metafieldsSet?.userErrors || [];
     if (errors.length) return res.status(400).json({ error: 'Shopify rejected', details: errors });
-    res.json({ ok: true, machine, online });
+    res.json({ ok: true, machine: M, online });
   } catch (e) {
     console.error('POST /api/machine error:', e);
     res.status(500).json({ error: e.message });
@@ -668,56 +719,13 @@ app.get('/api/track', async (req, res) => {
   }
 });
 
-// ─── Helper: recalculate machine_a/b queues from order metafields ─────────
-// Sums dtf_queued_cm (in metres) for unfulfilled orders grouped by custom.machine.
+// ─── Helper: refresh the per-machine queue metafields ────────────────────
+// Everything is derived in one place now (recomputeAll), so DTF metres, UV
+// metres and every machine queue always come from the same read of the open
+// order list. Kept as a named helper because /api/bulk-assign calls it.
 async function recalculateMachineQueues() {
-  const query = `
-    {
-      orders(first: 250, query: "fulfillment_status:unfulfilled") {
-        edges {
-          node {
-            id
-            machine: metafield(namespace: "custom", key: "machine") { value }
-            queued: metafield(namespace: "custom", key: "custom_dtf_queued_cm") { value }
-          }
-        }
-      }
-    }
-  `;
-  const data = await shopifyGraphQL(query);
-  const edges = data.data?.orders?.edges || [];
-  // Derived from VALID_MACHINES so adding a machine can never leave a gap here
-  // (a missing key made totals[m] undefined -> NaN -> Shopify rejected the whole
-  // mutation, silently freezing EVERY machine's queue, not just the new one).
-  const totals = Object.fromEntries(VALID_MACHINES.map(m => [m, 0]));
-  for (const e of edges) {
-    const m = (e.node.machine?.value || '').toUpperCase();
-    const meters = Number(e.node.queued?.value) || 0;
-    if (VALID_MACHINES.includes(m)) totals[m] += meters;
-  }
-  const shopGid = await getShopGid();
-  const mutation = `
-    mutation SetMachineQueues($metafields: [MetafieldsSetInput!]!) {
-      metafieldsSet(metafields: $metafields) {
-        userErrors { field message }
-      }
-    }
-  `;
-  const variables = {
-    metafields: VALID_MACHINES.map(m => ({
-      ownerId: shopGid,
-      namespace: 'dtfcapacity',
-      key: `machine_${m.toLowerCase()}_queue`,
-      type: 'number_decimal',
-      value: String(Number.isFinite(totals[m]) ? Number(totals[m].toFixed(2)) : 0),
-    })),
-  };
-  const res = await shopifyGraphQL(mutation, variables);
-  const errs = res.data?.metafieldsSet?.userErrors || [];
-  if (errs.length) {
-    console.error('recalculateMachineQueues rejected by Shopify:', JSON.stringify(errs), 'totals:', JSON.stringify(totals));
-  }
-  return totals;
+  const scan = await recomputeAll();
+  return scan.dtfByMachine;
 }
 
 // ─── Helper: stamp custom.setup_at when machine assigned but setup_at empty ─
@@ -878,12 +886,48 @@ function verifyShopifyHmac(req) {
 // Roll length (cm) consumed by one unit of a piece measuring a x b cm.
 // The piece can be laid either way round on the 56 cm roll; take whichever
 // orientation wastes less roll. Reproduces the hand-tuned DTF_TILED numbers.
-function bestFitCmPerUnit(a, b) {
+function bestFitCmPerUnit(a, b, rollWidthCm = ROLL_WIDTH_CM) {
   const options = [];
-  if (a > 0 && a <= ROLL_WIDTH_CM) options.push(b / Math.floor(ROLL_WIDTH_CM / a));
-  if (b > 0 && b <= ROLL_WIDTH_CM) options.push(a / Math.floor(ROLL_WIDTH_CM / b));
+  if (a > 0 && a <= rollWidthCm) options.push(b / Math.floor(rollWidthCm / a));
+  if (b > 0 && b <= rollWidthCm) options.push(a / Math.floor(rollWidthCm / b));
   if (!options.length) return 0;   // neither side fits across the roll
   return Math.min(...options);
+}
+
+// Film length (cm) consumed by ONE unit of a UV-DTF SKU, or 0 if the SKU is
+// not UV-DTF production work.
+//
+// Recognised shapes (case-insensitive):
+//   59x100-UVDTF       gang sheet, full 59 cm film width -> 100 cm of film
+//   59x100-UVDTF-LT    low-tack film, same print
+//   59x100-UVDTF-RO    rush order, same print
+//   UVDTF_GANG_150     alternative gang naming, 150 cm of film
+// Samples and colour swatches are offcuts, not scheduled production, so they
+// are excluded — exactly as DTF-SMPL is on the DTF side.
+function uvSkuToCm(rawSku) {
+  let sku = String(rawSku || '').trim().toUpperCase();
+  if (!sku) return 0;
+  if (!(sku.includes('UVDTF') || sku.includes('UV-DTF') || sku.includes('UV_DTF'))) return 0;
+  if (sku.includes('SMPL') || sku.includes('SAMPLE') || sku.includes('SWTCH') || sku.includes('SWATCH')) return 0;
+
+  // Service / film-variant suffixes that don't change the printed length.
+  let stripped;
+  do {
+    stripped = sku;
+    sku = sku.replace(/[_-](RO|LT|CUT)$/, '');
+  } while (sku !== stripped);
+
+  // Gang sheets named UVDTF_GANG_<n> / UV-DTF_GANG_<n>.
+  const gang = sku.match(/^UV[_-]?DTF[_-]GANG[_-](\d+(?:\.\d+)?)$/);
+  if (gang) return Number(gang[1]);
+
+  // Sized sheets, e.g. 59x100-UVDTF. A 59-wide sheet is full film width and
+  // consumes its whole length; anything narrower gets tiled across the film.
+  const sized = sku.match(/^(\d+(?:\.\d+)?)X(\d+(?:\.\d+)?)[_-]UVDTF$/);
+  if (sized) return bestFitCmPerUnit(Number(sized[1]), Number(sized[2]), UV_FILM_WIDTH_CM);
+
+  console.warn(`uvSkuToCm: unrecognised UV-DTF SKU "${rawSku}" — counted as 0 m`);
+  return 0;
 }
 
 // Roll length (cm) consumed by ONE unit of the given SKU, or 0 if the SKU
@@ -961,6 +1005,17 @@ function lineItemsToMeters(lineItems = []) {
   return Math.round(totalCm) / 100;
 }
 
+// Same, for UV-DTF film. Returns METRES, to match uvcapacity.used.
+function uvLineItemsToMeters(lineItems = []) {
+  let totalCm = 0;
+  for (const item of lineItems) {
+    const qty = Number(item.quantity) || 0;
+    if (qty <= 0) continue;
+    totalCm += uvSkuToCm(item.sku) * qty;
+  }
+  return Math.round(totalCm) / 100;
+}
+
 // NOTE: the metafield is named `dtf_queued_cm` for back-compat with the
 // existing Order metafield definition (custom.dtf_queued_cm), but the value
 // is actually stored in METRES to match the dtfcapacity.used unit.
@@ -998,26 +1053,122 @@ async function setOrderQueuedMeters(orderGid, meters) {
   if (errors.length) throw new Error('setOrderQueuedMeters errors: ' + JSON.stringify(errors));
 }
 
-// Reads both capacity metafields in one call. Both values are in METRES.
-async function readCapacity() {
+// ─── Source of truth: recompute the queue from the orders still outstanding ─
+// dtfcapacity.used used to be a running total (+= on paid, -= on fulfilled).
+// Any missed webhook, hand-typed value or order archived without being
+// fulfilled left a permanent error that could never correct itself — it drifted
+// 140 m out by Sept 2026. We now MEASURE instead of counting: every webhook
+// re-derives the figures from the orders that are genuinely open, so a bad
+// reading fixes itself on the very next order.
+//
+// NOTE the `status:open` half of the filter: a plain fulfillment_status search
+// also returns CANCELLED orders, which would inflate every total.
+const OPEN_ORDERS_QUERY = 'fulfillment_status:unfulfilled AND status:open';
+
+const round2 = (n) => Math.round((Number(n) || 0) * 100) / 100;
+
+// One pass over every open, unfulfilled, non-cancelled order, returning both
+// departments' figures. Deliberately a single scan: DTF metres, UV metres and
+// the per-machine queues can then never disagree because they were read at
+// slightly different moments.
+async function scanOpenOrders() {
+  let after = null;
+  let dtfMeters = 0;
+  let uvMeters = 0;
+  let orders = 0;
+  // Derived from the machine lists so adding a machine can never leave a gap
+  // here (a missing key made totals[m] undefined -> NaN -> Shopify rejected the
+  // whole mutation, silently freezing EVERY machine's queue).
+  const dtfByMachine = Object.fromEntries(VALID_MACHINES.map(m => [m, 0]));
+  const uvByMachine = Object.fromEntries(UV_MACHINES.map(m => [m, 0]));
+
+  for (let page = 0; page < 40; page++) {   // hard cap: 40 x 50 = 2000 orders
+    const data = await shopifyGraphQL(`
+      query OpenOrders($q: String!, $after: String) {
+        orders(first: 50, after: $after, query: $q) {
+          pageInfo { hasNextPage endCursor }
+          edges {
+            node {
+              id
+              machine: metafield(namespace: "custom", key: "machine") { value }
+              uvMachine: metafield(namespace: "custom", key: "uv_machine") { value }
+              queued: metafield(namespace: "custom", key: "custom_dtf_queued_cm") { value }
+              lineItems(first: 50) { edges { node { sku quantity } } }
+            }
+          }
+        }
+      }
+    `, { q: OPEN_ORDERS_QUERY, after });
+    const conn = data.data?.orders;
+    if (!conn) break;
+    for (const edge of conn.edges || []) {
+      const node = edge.node;
+      const items = (node.lineItems?.edges || []).map(e => e.node);
+      dtfMeters += lineItemsToMeters(items);
+      const uv = uvLineItemsToMeters(items);
+      uvMeters += uv;
+      orders++;
+
+      // DTF per-machine totals come from the stamped order metafield, because
+      // that is what the workshop actually committed to a given machine.
+      const m = (node.machine?.value || '').trim().toUpperCase();
+      if (Object.prototype.hasOwnProperty.call(dtfByMachine, m)) {
+        dtfByMachine[m] += Number(node.queued?.value) || 0;
+      }
+
+      // UV work splits by custom.uv_machine once there is more than one UV
+      // printer. With a single printer everything lands on it. UV_MACHINES[0]
+      // is always a real key, so an unexpected value can't create an
+      // undefined -> NaN total.
+      if (uv > 0) {
+        const raw = (node.uvMachine?.value || '').trim().toUpperCase();
+        const target = UV_MACHINES.includes(raw) ? raw : UV_MACHINES[0];
+        uvByMachine[target] += uv;
+      }
+    }
+    if (!conn.pageInfo?.hasNextPage) break;
+    after = conn.pageInfo.endCursor;
+  }
+
+  const roundAll = (obj) =>
+    Object.fromEntries(Object.entries(obj).map(([k, v]) => [k, round2(v)]));
+  return {
+    orders,
+    dtfMeters: round2(dtfMeters),
+    uvMeters: round2(uvMeters),
+    dtfByMachine: roundAll(dtfByMachine),
+    uvByMachine: roundAll(uvByMachine),
+  };
+}
+
+// Everything recomputeAll needs, in one round trip (shop id included).
+async function readCapacitySnapshot() {
   const data = await shopifyGraphQL(`
     {
       shop {
-        total: metafield(namespace: "dtfcapacity", key: "total") { value }
-        used: metafield(namespace: "dtfcapacity", key: "used") { value }
+        id
+        dtfTotal: metafield(namespace: "dtfcapacity", key: "total") { value }
+        dtfUsed:  metafield(namespace: "dtfcapacity", key: "used")  { value }
+        uvTotal:  metafield(namespace: "uvcapacity",  key: "total") { value }
+        uvUsed:   metafield(namespace: "uvcapacity",  key: "used")  { value }
+        uvStatus: metafield(namespace: "workshop_status", key: "uv_dtf") { value }
       }
     }
   `);
   const shop = data.data?.shop || {};
   return {
-    total: Number(shop.total?.value || 0),
-    used: Number(shop.used?.value || 0),
+    shopGid: shop.id,
+    dtfTotal: Number(shop.dtfTotal?.value || 0),
+    dtfUsed: Number(shop.dtfUsed?.value || 0),
+    uvTotal: Number(shop.uvTotal?.value || 0),
+    uvUsed: Number(shop.uvUsed?.value || 0),
+    uvStatus: (shop.uvStatus?.value || '').toLowerCase(),
   };
 }
 
-// Derives the DTF status pill from how full the workshop is as a PERCENTAGE of
-// the configured daily capacity (dtfcapacity.total), NOT from absolute metres.
-// Thresholds match the capacity bar colours used in the admin app and theme:
+// Derives a status pill from how full a department is as a PERCENTAGE of its
+// configured daily capacity, NOT from absolute metres. Thresholds match the
+// capacity bar colours used in the admin app and theme:
 //   <40% not_busy · 40–74% moderate · 75–99% busy · >=100% full_capacity
 // Returns null when no usable total is configured — callers must then leave the
 // existing status untouched rather than guessing.
@@ -1033,101 +1184,88 @@ function queueToStatus(usedMeters, totalMeters) {
   return 'full_capacity';
 }
 
-// ─── Source of truth: recompute the queue from the orders still outstanding ─
-// dtfcapacity.used used to be a running total (+= on paid, -= on fulfilled).
-// Any missed webhook, hand-typed value or order archived without being
-// fulfilled left a permanent error that could never correct itself — it drifted
-// 140 m out by Sept 2026. We now MEASURE instead of counting: every webhook
-// re-derives the figure from the orders that are genuinely open, so a bad
-// reading fixes itself on the very next order.
-const OPEN_ORDERS_QUERY = 'fulfillment_status:unfulfilled AND status:open';
+// Recomputes and stores every derived figure: DTF used + machine queues + DTF
+// status pill, and UV used + machine queues + UV status pill. One mutation, so
+// a rejection can never leave half the dashboard stale.
+async function recomputeAll() {
+  const scan = await scanOpenOrders();
+  const snap = await readCapacitySnapshot();
+  if (!snap.shopGid) throw new Error('recomputeAll: could not load shop ID');
 
-// Pages through every open, unfulfilled, non-cancelled order and returns the
-// total metres of DTF roll they represent, computed from their line items.
-async function sumOpenOrderMeters() {
-  let after = null;
-  let total = 0;
-  let orders = 0;
-  for (let page = 0; page < 40; page++) {   // hard cap: 40 x 50 = 2000 orders
-    const data = await shopifyGraphQL(`
-      query OpenOrders($q: String!, $after: String) {
-        orders(first: 50, after: $after, query: $q) {
-          pageInfo { hasNextPage endCursor }
-          edges { node { id lineItems(first: 50) { edges { node { sku quantity } } } } }
-        }
-      }
-    `, { q: OPEN_ORDERS_QUERY, after });
-    const conn = data.data?.orders;
-    if (!conn) break;
-    for (const edge of conn.edges || []) {
-      const items = (edge.node.lineItems?.edges || []).map(e => e.node);
-      total += lineItemsToMeters(items);
-      orders++;
-    }
-    if (!conn.pageInfo?.hasNextPage) break;
-    after = conn.pageInfo.endCursor;
-  }
-  return { meters: Math.round(total * 100) / 100, orders };
-}
-
-// Recomputes and stores dtfcapacity.used (plus the status pill).
-async function recomputeCapacityUsed() {
-  const { meters, orders } = await sumOpenOrderMeters();
-  const { used: before, total } = await readCapacity();
-  await writeCapacityUsed(meters, total);
-  const drift = Math.round((before - meters) * 100) / 100;
-  if (Math.abs(drift) >= 0.01) {
-    console.log(`recomputeCapacityUsed: ${before}m → ${meters}m across ${orders} open orders (corrected ${drift}m of drift)`);
-  }
-  return meters;
-}
-
-async function writeCapacityUsed(newUsed, totalMeters) {
-  const shopGid = await getShopGid();
-  const total = Number.isFinite(Number(totalMeters))
-    ? Number(totalMeters)
-    : (await readCapacity()).total;
-  const status = queueToStatus(Math.max(0, newUsed), total);
   const nowIso = new Date().toISOString();
-  const mutation = `
+  // Never let a NaN reach Shopify: one bad value rejects the WHOLE mutation.
+  const safe = (v) => String(Number.isFinite(Number(v)) ? Math.max(0, round2(v)) : 0);
+
+  const metafields = [
+    { ownerId: snap.shopGid, namespace: 'dtfcapacity', key: 'used',
+      type: 'number_decimal', value: safe(scan.dtfMeters) },
+    { ownerId: snap.shopGid, namespace: 'workshop_status', key: 'dtf_updated',
+      type: 'date_time', value: nowIso },
+    ...VALID_MACHINES.map(m => ({
+      ownerId: snap.shopGid, namespace: 'dtfcapacity',
+      key: `machine_${m.toLowerCase()}_queue`,
+      type: 'number_decimal', value: safe(scan.dtfByMachine[m]),
+    })),
+    { ownerId: snap.shopGid, namespace: 'uvcapacity', key: 'used',
+      type: 'number_decimal', value: safe(scan.uvMeters) },
+    ...UV_MACHINES.map(m => ({
+      ownerId: snap.shopGid, namespace: 'uvcapacity',
+      key: `machine_${m.toLowerCase()}_queue`,
+      type: 'number_decimal', value: safe(scan.uvByMachine[m]),
+    })),
+  ];
+
+  const dtfStatus = queueToStatus(scan.dtfMeters, snap.dtfTotal);
+  if (dtfStatus) {
+    metafields.push({
+      ownerId: snap.shopGid, namespace: 'workshop_status', key: 'dtf',
+      type: 'single_line_text_field', value: dtfStatus,
+    });
+  } else {
+    console.warn('recomputeAll: dtfcapacity.total is 0/unset — leaving workshop_status.dtf unchanged');
+  }
+
+  const uvStatus = queueToStatus(scan.uvMeters, snap.uvTotal);
+  const uvChanged = Math.abs(snap.uvUsed - scan.uvMeters) >= 0.01;
+  if (uvStatus) {
+    metafields.push({
+      ownerId: snap.shopGid, namespace: 'workshop_status', key: 'uv_dtf',
+      type: 'single_line_text_field', value: uvStatus,
+    });
+  } else {
+    console.warn('recomputeAll: uvcapacity.total is 0/unset — leaving workshop_status.uv_dtf unchanged');
+  }
+  // Only move the UV timestamp when UV actually moved, so a DTF-only order
+  // doesn't make the storefront claim the UV department just updated.
+  if (uvChanged || (uvStatus && uvStatus !== snap.uvStatus)) {
+    metafields.push({
+      ownerId: snap.shopGid, namespace: 'workshop_status', key: 'uv_dtf_updated',
+      type: 'date_time', value: nowIso,
+    });
+  }
+
+  const data = await shopifyGraphQL(`
     mutation Write($metafields: [MetafieldsSetInput!]!) {
       metafieldsSet(metafields: $metafields) {
         userErrors { field message }
       }
     }
-  `;
-  const metafields = [
-    {
-      ownerId: shopGid,
-      namespace: 'dtfcapacity',
-      key: 'used',
-      type: 'number_decimal',
-      value: String(Math.max(0, newUsed)),
-    },
-    {
-      ownerId: shopGid,
-      namespace: 'workshop_status',
-      key: 'dtf_updated',
-      type: 'date_time',
-      value: nowIso,
-    },
-  ];
-  // Only touch the status pill when we can work out a real percentage.
-  // With no capacity total configured, keep whatever was set manually.
-  if (status) {
-    metafields.push({
-      ownerId: shopGid,
-      namespace: 'workshop_status',
-      key: 'dtf',
-      type: 'single_line_text_field',
-      value: status,
-    });
-  } else {
-    console.warn('writeCapacityUsed: dtfcapacity.total is 0/unset — leaving workshop_status.dtf unchanged');
-  }
-  const data = await shopifyGraphQL(mutation, { metafields });
+  `, { metafields });
   const errors = data.data?.metafieldsSet?.userErrors || [];
-  if (errors.length) throw new Error('writeCapacityUsed errors: ' + JSON.stringify(errors));
+  if (errors.length) {
+    // Loud, because a silently swallowed rejection here once froze every
+    // machine queue for two hours without anything looking wrong.
+    console.error('recomputeAll rejected by Shopify:', JSON.stringify(errors),
+      'payload:', JSON.stringify({ dtf: scan.dtfByMachine, uv: scan.uvByMachine }));
+    throw new Error('recomputeAll errors: ' + JSON.stringify(errors));
+  }
+
+  const dtfDrift = round2(snap.dtfUsed - scan.dtfMeters);
+  const uvDrift = round2(snap.uvUsed - scan.uvMeters);
+  if (Math.abs(dtfDrift) >= 0.01 || Math.abs(uvDrift) >= 0.01) {
+    console.log(`recomputeAll across ${scan.orders} open orders — DTF ${snap.dtfUsed}m → ${scan.dtfMeters}m (drift ${dtfDrift}m), UV ${snap.uvUsed}m → ${scan.uvMeters}m (drift ${uvDrift}m)`);
+  }
+  return scan;
 }
 
 app.post('/api/webhooks/orders', async (req, res) => {
@@ -1145,40 +1283,43 @@ app.post('/api/webhooks/orders', async (req, res) => {
   try {
     if (topic === 'orders/paid') {
       const meters = lineItemsToMeters(order.line_items);
-      if (meters <= 0) return res.status(200).send('no dtf');
+      const uvMeters = uvLineItemsToMeters(order.line_items);
+      // UV-only orders have no DTF metres but still need the UV queue redone,
+      // so both departments are checked before bailing out.
+      if (meters <= 0 && uvMeters <= 0) return res.status(200).send('nothing to print');
 
-      const alreadyQueued = await getOrderQueuedMeters(orderGid);
-      if (alreadyQueued > 0) {
-        console.log(`Order ${orderId} already queued at ${alreadyQueued}m — skipping`);
-        return res.status(200).send('already queued');
+      // custom.custom_dtf_queued_cm is both the per-machine queue source and
+      // the idempotency marker, so it is only ever stamped once.
+      if (meters > 0) {
+        const alreadyQueued = await getOrderQueuedMeters(orderGid);
+        if (alreadyQueued > 0) {
+          console.log(`Order ${orderId} already queued at ${alreadyQueued}m — not re-stamping`);
+        } else {
+          // Stamp the order first so the recompute below and the machine
+          // queues both see it.
+          await setOrderQueuedMeters(orderGid, meters);
+        }
       }
-
-      // Stamp the order first so the recompute below and the machine queues
-      // both see it, then re-derive the whole queue from open orders.
-      await setOrderQueuedMeters(orderGid, meters);
-      const nowUsed = await recomputeCapacityUsed();
-      await recalculateMachineQueues();
-      console.log(`Order ${orderId} paid → +${meters}m (queue now ${nowUsed}m)`);
+      const scan = await recomputeAll();
+      console.log(`Order ${orderId} paid → +${meters}m DTF / +${uvMeters}m UV (queues now DTF ${scan.dtfMeters}m, UV ${scan.uvMeters}m)`);
     } else if (topic === 'orders/fulfilled' || topic === 'orders/cancelled') {
       // The order has left the queue. Clear its stamp, then recompute — no
       // subtraction to get wrong, and orders that never had a stamp (paid
       // before a fix, or bulk-imported) now drop out correctly too.
       const queuedMeters = await getOrderQueuedMeters(orderGid);
       if (queuedMeters > 0) await setOrderQueuedMeters(orderGid, 0);
-      const nowUsed = await recomputeCapacityUsed();
-      await recalculateMachineQueues();
-      console.log(`Order ${orderId} ${topic} → released ${queuedMeters}m (queue now ${nowUsed}m)`);
+      const scan = await recomputeAll();
+      console.log(`Order ${orderId} ${topic} → released ${queuedMeters}m (DTF queue now ${scan.dtfMeters}m, UV ${scan.uvMeters}m)`);
     } else if (topic === 'orders/updated') {
       // Line items can change after payment (edits, partial refunds), so the
       // queue is re-derived here too.
-      const nowUsed = await recomputeCapacityUsed();
-      await recalculateMachineQueues();
+      const scan = await recomputeAll();
       try {
         await maybeStampSetupAt(orderGid);
       } catch (e) {
         console.error('maybeStampSetupAt failed for', orderGid, e.message);
       }
-      console.log(`Order ${orderId} updated → queue now ${nowUsed}m`);
+      console.log(`Order ${orderId} updated → DTF queue now ${scan.dtfMeters}m, UV ${scan.uvMeters}m`);
     } else {
       console.log(`Webhook topic ${topic} not handled`);
     }
