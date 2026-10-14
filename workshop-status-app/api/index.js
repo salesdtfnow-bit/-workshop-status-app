@@ -686,7 +686,10 @@ async function recalculateMachineQueues() {
   `;
   const data = await shopifyGraphQL(query);
   const edges = data.data?.orders?.edges || [];
-  const totals = { A: 0, B: 0, C: 0 };
+  // Derived from VALID_MACHINES so adding a machine can never leave a gap here
+  // (a missing key made totals[m] undefined -> NaN -> Shopify rejected the whole
+  // mutation, silently freezing EVERY machine's queue, not just the new one).
+  const totals = Object.fromEntries(VALID_MACHINES.map(m => [m, 0]));
   for (const e of edges) {
     const m = (e.node.machine?.value || '').toUpperCase();
     const meters = Number(e.node.queued?.value) || 0;
@@ -706,10 +709,14 @@ async function recalculateMachineQueues() {
       namespace: 'dtfcapacity',
       key: `machine_${m.toLowerCase()}_queue`,
       type: 'number_decimal',
-      value: String(Number(totals[m].toFixed(2))),
+      value: String(Number.isFinite(totals[m]) ? Number(totals[m].toFixed(2)) : 0),
     })),
   };
-  await shopifyGraphQL(mutation, variables);
+  const res = await shopifyGraphQL(mutation, variables);
+  const errs = res.data?.metafieldsSet?.userErrors || [];
+  if (errs.length) {
+    console.error('recalculateMachineQueues rejected by Shopify:', JSON.stringify(errs), 'totals:', JSON.stringify(totals));
+  }
   return totals;
 }
 
