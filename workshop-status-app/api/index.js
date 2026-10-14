@@ -304,9 +304,11 @@ app.get('/api/statuses', requireAuth, async (_req, res) => {
           machine_a_online: metafield(namespace: "dtfcapacity", key: "machine_a_online") { value }
           machine_b_online: metafield(namespace: "dtfcapacity", key: "machine_b_online") { value }
           machine_c_online: metafield(namespace: "dtfcapacity", key: "machine_c_online") { value }
+          machine_d_online: metafield(namespace: "dtfcapacity", key: "machine_d_online") { value }
           machine_a_queue: metafield(namespace: "dtfcapacity", key: "machine_a_queue") { value }
           machine_b_queue: metafield(namespace: "dtfcapacity", key: "machine_b_queue") { value }
           machine_c_queue: metafield(namespace: "dtfcapacity", key: "machine_c_queue") { value }
+          machine_d_queue: metafield(namespace: "dtfcapacity", key: "machine_d_queue") { value }
         }
       }
     `;
@@ -455,7 +457,7 @@ app.post('/api/capacity', requireAuth, async (req, res) => {
 });
 
 // ─── API: toggle Machine A / B / C online state ───────────────────────────
-const VALID_MACHINES = ['A', 'B', 'C'];
+const VALID_MACHINES = ['A', 'B', 'C', 'D'];
 
 app.post('/api/machine', requireAuth, async (req, res) => {
   try {
