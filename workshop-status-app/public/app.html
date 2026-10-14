@@ -295,9 +295,11 @@
     const DEPARTMENTS = [
       { key: 'overall',         label: 'Overall workshop', desc: 'High-level summary shown to customers', overall: true,
         icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6"/></svg>' },
-      { key: 'dtf',             label: 'DTF production',           desc: 'Direct-to-film transfer queue', capacity: true,
+      { key: 'dtf',             label: 'DTF production',           desc: 'Direct-to-film transfer queue',
+        cap: { totalKey: 'dtf_capacity_total', usedKey: 'dtf_capacity_used', machines: ['A', 'B', 'C', 'D'], machineLabel: m => `Machine ${m}` },
         icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M6.72 13.83c-.24.03-.48.06-.72.1m.72-.1a42.4 42.4 0 0 1 10.56 0m-10.56 0L6.34 18m10.94-4.17c.24.03.48.06.72.1m-.72-.1L17.66 18m0 0 .23 2.52a1.13 1.13 0 0 1-1.12 1.23H7.23c-.66 0-1.18-.57-1.12-1.23L6.34 18m11.32 0h1.09A2.25 2.25 0 0 0 21 15.75V9.46c0-1.08-.77-2.02-1.84-2.18a48 48 0 0 0-1.91-.25M6.34 18H5.25A2.25 2.25 0 0 1 3 15.75V9.46c0-1.08.77-2.02 1.84-2.18.63-.09 1.27-.18 1.91-.25m10.5 0a48.5 48.5 0 0 0-10.5 0m10.5 0V3.38c0-.62-.5-1.13-1.13-1.13h-8.25c-.62 0-1.12.5-1.12 1.13v3.66M18 10.5h.01M15 10.5h.01"/></svg>' },
       { key: 'uv_dtf',          label: 'UV-DTF production',        desc: 'UV-DTF transfer queue',
+        cap: { totalKey: 'uv_capacity_total', usedKey: 'uv_capacity_used', machines: ['UV'], machineLabel: m => m === 'UV' ? 'UV printer' : `Machine ${m}` },
         icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M15.59 14.37a6 6 0 0 1-5.84 7.38v-4.8m5.84-2.58a14.98 14.98 0 0 0 6.16-12.12A14.98 14.98 0 0 0 9.63 8.41m5.96 5.96a14.93 14.93 0 0 1-5.84 2.58m-.12-8.54a6 6 0 0 0-7.38 5.84h4.8m2.58-5.84a14.93 14.93 0 0 0-2.58 5.84m2.7 2.7c-.1.02-.21.04-.31.06a15.09 15.09 0 0 1-2.45-2.45 14.9 14.9 0 0 1 .06-.31M16.5 9a1.5 1.5 0 1 1-3 0 1.5 1.5 0 0 1 3 0Z"/></svg>' },
       { key: 'artwork_setup',   label: 'Artwork setup',            desc: 'Artwork checks, file prep, setup queue',
         icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="m16.86 4.49 1.69-1.69a1.875 1.875 0 1 1 2.65 2.65L10.58 16.07a4.5 4.5 0 0 1-1.9 1.13L6 18l.8-2.69a4.5 4.5 0 0 1 1.13-1.9l8.93-8.93Zm0 0L19.5 7.13M18 14v4.75A2.25 2.25 0 0 1 15.75 21H5.25A2.25 2.25 0 0 1 3 18.75V8.25A2.25 2.25 0 0 1 5.25 6H10"/></svg>' },
@@ -366,13 +368,13 @@
         const current = (data[dept.key]?.value || '').toLowerCase();
         const updatedAt = data[`${dept.key}_updated`]?.value || '';
         const card = document.createElement('div');
-        card.className = 'card' + (dept.overall ? ' overall' : '') + (dept.capacity ? ' featured' : '');
+        card.className = 'card' + (dept.overall ? ' overall' : '') + (dept.cap ? ' featured' : '');
         const pillClass = STATUSES.find(s => s.key === current) ? `s-${current}` : 's-unknown';
 
         let capacityHtml = '';
-        if (dept.capacity) {
-          const total = Number(data.dtf_capacity_total?.value) || 0;
-          const usedRaw = Number(data.dtf_capacity_used?.value) || 0;
+        if (dept.cap) {
+          const total = Number(data[dept.cap.totalKey]?.value) || 0;
+          const usedRaw = Number(data[dept.cap.usedKey]?.value) || 0;
           const used = Math.ceil(usedRaw); // Round up to nearest whole metre for display
           const pct = total > 0 ? Math.min(100, Math.round((usedRaw / total) * 100)) : 0;
           const widthPct = total > 0 ? Math.min(100, (usedRaw / total) * 100) : 0;
@@ -387,42 +389,46 @@
                 <div class="input-group">
                   <label>Daily capacity</label>
                   <div class="input-row">
-                    <input type="number" id="cap-total" value="${total}" min="0" max="100000" step="10" />
+                    <input type="number" id="cap-total-${dept.key}" value="${total}" min="0" max="100000" step="10" />
                     <span class="unit">m</span>
                   </div>
                 </div>
                 <div class="input-group">
                   <label>Current queue</label>
                   <div class="input-row">
-                    <input type="number" id="cap-used" value="${used}" min="0" max="100000" step="1" />
+                    <input type="number" id="cap-used-${dept.key}" value="${used}" min="0" max="100000" step="1" />
                     <span class="unit">m</span>
                   </div>
                 </div>
               </div>
-              <div class="quick-row">
+              <div class="quick-row" data-cap-dept="${dept.key}">
                 <button class="quick-btn" data-bump="5">+5m</button>
                 <button class="quick-btn" data-bump="10">+10m</button>
                 <button class="quick-btn" data-bump="25">+25m</button>
                 <button class="quick-btn" data-bump="-10">−10m</button>
                 <button class="quick-btn danger" data-bump="reset">Reset to 0</button>
-                <button class="quick-btn" id="cap-save" style="margin-left:auto;background:#202223;color:#fff;border-color:#202223">Save</button>
+                <button class="quick-btn cap-save" data-dept="${dept.key}" style="margin-left:auto;background:#202223;color:#fff;border-color:#202223">Save</button>
               </div>
             </div>
           `;
 
-          // Machine sub-cards
-          const machines = [
-            { key: 'A', queue: Number(data.machine_a_queue?.value) || 0, online: (data.machine_a_online?.value === 'true') },
-            { key: 'B', queue: Number(data.machine_b_queue?.value) || 0, online: (data.machine_b_online?.value === 'true') },
-            { key: 'C', queue: Number(data.machine_c_queue?.value) || 0, online: (data.machine_c_online?.value === 'true') },
-            { key: 'D', queue: Number(data.machine_d_queue?.value) || 0, online: (data.machine_d_online?.value === 'true') },
-          ];
+          // Machine sub-cards, derived from the department's machine list so
+          // adding one is a single-line change and can never leave a gap.
+          const machines = dept.cap.machines.map(key => {
+            const k = key.toLowerCase();
+            return {
+              key,
+              label: dept.cap.machineLabel(key),
+              queue: Number(data[`machine_${k}_queue`]?.value) || 0,
+              online: (data[`machine_${k}_online`]?.value === 'true'),
+            };
+          });
           capacityHtml += `
             <div class="machines">
               ${machines.map(m => `
                 <div class="machine ${m.online ? 'online' : 'offline'}">
                   <div class="machine-head">
-                    <strong>Machine ${m.key}</strong>
+                    <strong>${m.label}</strong>
                     <button class="toggle" data-machine="${m.key}" data-online="${m.online ? '1' : '0'}">
                       ${m.online ? 'Online' : 'Offline'}
                     </button>
@@ -479,19 +485,25 @@
         });
       });
 
-      // Capacity controls
-      const totalInput = document.getElementById('cap-total');
-      const usedInput = document.getElementById('cap-used');
-      const saveBtn = document.getElementById('cap-save');
-      if (totalInput && usedInput && saveBtn) {
-        document.querySelectorAll('.quick-btn[data-bump]').forEach(b => {
+      // Capacity controls — one set per department that has a capacity block
+      document.querySelectorAll('.quick-row[data-cap-dept]').forEach(row => {
+        const deptKey = row.dataset.capDept;
+        const usedInput = document.getElementById(`cap-used-${deptKey}`);
+        if (!usedInput) return;
+        row.querySelectorAll('.quick-btn[data-bump]').forEach(b => {
           b.addEventListener('click', () => {
             const bump = b.dataset.bump;
             if (bump === 'reset') usedInput.value = 0;
             else usedInput.value = Math.max(0, (Number(usedInput.value) || 0) + Number(bump));
           });
         });
+      });
+      document.querySelectorAll('.cap-save').forEach(saveBtn => {
         saveBtn.addEventListener('click', async () => {
+          const deptKey = saveBtn.dataset.dept;
+          const totalInput = document.getElementById(`cap-total-${deptKey}`);
+          const usedInput = document.getElementById(`cap-used-${deptKey}`);
+          if (!totalInput || !usedInput) return;
           saveBtn.disabled = true;
           try {
             const total = Number(totalInput.value);
@@ -500,7 +512,7 @@
             const r = await fetch('/api/capacity', {
               method: 'POST',
               headers: authHeaders({ 'Content-Type': 'application/json' }),
-              body: JSON.stringify({ total, used }),
+              body: JSON.stringify({ dept: deptKey, total, used }),
             });
             const result = await r.json();
             if (!r.ok) throw new Error(result.error || 'Save failed');
@@ -511,7 +523,7 @@
             saveBtn.disabled = false;
           }
         });
-      }
+      });
 
       // Machine online/offline toggles
       document.querySelectorAll('.machine .toggle').forEach(btn => {
@@ -528,7 +540,7 @@
             });
             const result = await r.json();
             if (!r.ok) throw new Error(result.error || 'Toggle failed');
-            toast(`Machine ${machine} → ${newOnline ? 'Online' : 'Offline'}`);
+            toast(`${machine === 'UV' ? 'UV printer' : 'Machine ' + machine} → ${newOnline ? 'Online' : 'Offline'}`);
             await loadStatuses();
           } catch (err) {
             toast(err.message, true);
