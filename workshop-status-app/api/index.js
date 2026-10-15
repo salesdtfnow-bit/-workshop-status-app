@@ -1053,6 +1053,56 @@ async function setOrderQueuedMeters(orderGid, meters) {
   if (errors.length) throw new Error('setOrderQueuedMeters errors: ' + JSON.stringify(errors));
 }
 
+// ─── Per-order UV film total ──────────────────────────────────────────────
+// custom.uvdtf_queued_cm is the UV sibling of custom.custom_dtf_queued_cm, so
+// a mixed DTF + UV-DTF order shows both halves on its order page: how many
+// metres of DTF roll and how many metres of UV film it still needs.
+//
+// The key ends in "_cm" to match its DTF sibling, but the value is in METRES,
+// like every other figure in this app.
+//
+// This field is for VISIBILITY ONLY. The UV queue is always re-derived from
+// line items in scanOpenOrders(), so a wrong or missing value here can never
+// corrupt the capacity bar — it just corrects itself on the next webhook.
+async function syncOrderUvMeters(orderGid, meters) {
+  const target = Math.max(0, round2(meters));
+  const data = await shopifyGraphQL(`
+    query OrderUvQueued($id: ID!) {
+      order(id: $id) {
+        metafield(namespace: "custom", key: "uvdtf_queued_cm") { value }
+      }
+    }
+  `, { id: orderGid });
+  const raw = data.data?.order?.metafield?.value;
+  const current = raw == null ? null : Number(raw);
+
+  // Writing an unchanged value fires another orders/updated webhook, which
+  // comes straight back here — so only write when the figure actually moves.
+  if (current !== null && Number.isFinite(current) && Math.abs(current - target) < 0.005) return target;
+  // Nothing stored and nothing to store: don't create an empty 0 on every
+  // DTF-only order.
+  if (current === null && target === 0) return 0;
+
+  const res = await shopifyGraphQL(`
+    mutation SetOrderUvQueued($metafields: [MetafieldsSetInput!]!) {
+      metafieldsSet(metafields: $metafields) {
+        userErrors { field message }
+      }
+    }
+  `, {
+    metafields: [{
+      ownerId: orderGid,
+      namespace: 'custom',
+      key: 'uvdtf_queued_cm',
+      type: 'number_decimal',
+      value: String(target),
+    }],
+  });
+  const errs = res.data?.metafieldsSet?.userErrors || [];
+  if (errs.length) console.error('syncOrderUvMeters errors:', JSON.stringify(errs), 'order:', orderGid);
+  return target;
+}
+
 // ─── Source of truth: recompute the queue from the orders still outstanding ─
 // dtfcapacity.used used to be a running total (+= on paid, -= on fulfilled).
 // Any missed webhook, hand-typed value or order archived without being
@@ -1300,6 +1350,9 @@ app.post('/api/webhooks/orders', async (req, res) => {
           await setOrderQueuedMeters(orderGid, meters);
         }
       }
+      // UV is recomputed from line items every time, so this stamp is purely
+      // so the UV half of a mixed order is visible on the order page.
+      await syncOrderUvMeters(orderGid, uvMeters);
       const scan = await recomputeAll();
       console.log(`Order ${orderId} paid → +${meters}m DTF / +${uvMeters}m UV (queues now DTF ${scan.dtfMeters}m, UV ${scan.uvMeters}m)`);
     } else if (topic === 'orders/fulfilled' || topic === 'orders/cancelled') {
@@ -1308,11 +1361,20 @@ app.post('/api/webhooks/orders', async (req, res) => {
       // before a fix, or bulk-imported) now drop out correctly too.
       const queuedMeters = await getOrderQueuedMeters(orderGid);
       if (queuedMeters > 0) await setOrderQueuedMeters(orderGid, 0);
+      await syncOrderUvMeters(orderGid, 0);
       const scan = await recomputeAll();
       console.log(`Order ${orderId} ${topic} → released ${queuedMeters}m (DTF queue now ${scan.dtfMeters}m, UV ${scan.uvMeters}m)`);
     } else if (topic === 'orders/updated') {
       // Line items can change after payment (edits, partial refunds), so the
       // queue is re-derived here too.
+      //
+      // Mirror the same open/closed test the queue uses, so an order that has
+      // shipped or been cancelled or archived drops its UV stamp rather than
+      // having it resurrected from line items that are no longer outstanding.
+      const stillOpen = !order.cancelled_at
+        && !order.closed_at
+        && order.fulfillment_status !== 'fulfilled';
+      await syncOrderUvMeters(orderGid, stillOpen ? uvLineItemsToMeters(order.line_items) : 0);
       const scan = await recomputeAll();
       try {
         await maybeStampSetupAt(orderGid);
